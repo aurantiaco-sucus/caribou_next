@@ -1,5 +1,6 @@
-use glutin::event::VirtualKeyCode;
-use crate::caribou::input::Key;
+use glutin::event::{ModifiersState, MouseButton, VirtualKeyCode};
+use crate::caribou;
+use crate::caribou::input::{Key, Modifier};
 
 pub fn gl_virtual_to_key(vir: VirtualKeyCode) -> Key {
     match vir {
@@ -166,5 +167,34 @@ pub fn gl_virtual_to_key(vir: VirtualKeyCode) -> Key {
         VirtualKeyCode::Copy => Key::Copy,
         VirtualKeyCode::Paste => Key::Paste,
         VirtualKeyCode::Cut => Key::Cut,
+    }
+}
+
+pub fn gl_modifier_interpret(modifiers: ModifiersState) -> Vec<Modifier> {
+    let mut result = Vec::new();
+    if modifiers.shift() {
+        result.push(Modifier::Shift);
+    }
+    if modifiers.ctrl() {
+        result.push(Modifier::Control);
+    }
+    if modifiers.alt() {
+        result.push(Modifier::Alt);
+    }
+    if modifiers.logo() {
+        result.push(Modifier::Meta);
+    }
+    result
+}
+
+type CbMB = caribou::input::MouseButton;
+
+pub fn gl_mouse_button_interpret(button: MouseButton) -> CbMB {
+    // TODO: Platform-specific mouse mapping
+    match button {
+        MouseButton::Left => CbMB::Primary,
+        MouseButton::Right => CbMB::Secondary,
+        MouseButton::Middle => CbMB::Tertiary,
+        MouseButton::Other(n) => CbMB::Other(n),
     }
 }

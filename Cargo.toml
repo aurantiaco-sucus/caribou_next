@@ -7,3 +7,9 @@ edition = "2021"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
+gl = "0.14"
+glutin = "0.29"
+skia-safe = { version = "0.55", features = ["gpu", "gl"] }
+pretty_env_logger = "0.4"
+log = "0.4"
+async-recursion = "1"

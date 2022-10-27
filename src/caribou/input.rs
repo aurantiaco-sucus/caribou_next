@@ -1,7 +1,9 @@
+use crate::caribou::math::ScalarPair;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct KeyEvent {
+pub struct KeyEventInfo {
     pub key: Key,
+    pub is_down: bool,
     pub modifiers: Vec<Modifier>,
 }
 
@@ -133,4 +135,32 @@ pub enum Key {
     Copy,
     Paste,
     Cut,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum MouseEventInfo {
+    Enter,
+    Leave,
+    Down {
+        button: MouseButton,
+        pos: ScalarPair,
+        modifiers: Vec<Modifier>,
+    },
+    Up {
+        button: MouseButton,
+        pos: ScalarPair,
+        modifiers: Vec<Modifier>,
+    },
+    Move {
+        pos: ScalarPair,
+        modifiers: Vec<Modifier>,
+    },
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum MouseButton {
+    Primary,
+    Secondary,
+    Tertiary,
+    Other(u16),
 }
