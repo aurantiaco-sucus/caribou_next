@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::convert::Into;
 use std::sync::{Arc, RwLock};
+use std::sync::atomic::AtomicBool;
 
 use gl::types::*;
 use glutin::{
@@ -19,6 +20,7 @@ use glutin::{
     },
     event_loop::ControlFlow::Wait
 };
+use glutin::event_loop::ControlFlow::WaitUntil;
 use log::{debug, info, warn};
 use skia_safe::{
     gpu::gl::{Format, FramebufferInfo},
@@ -50,6 +52,7 @@ pub struct SkGLEnv2 {
     pub surface: RefCell<Surface>,
     pub gr_context: RefCell<DirectContext>,
     pub windowed_context: WindowedContext,
+    pub need_redraw: AtomicBool,
 }
 
 unsafe impl Send for SkGLEnv2 {}
@@ -147,14 +150,18 @@ pub fn skia_gl_launch(window: CbWindow, env_id: usize) {
         surface: surface.into(),
         gr_context: gr_context.into(),
         windowed_context,
+        need_redraw: AtomicBool::new(true),
     }));
 
     let mut mouse_pos: ScalarPair = (0.0, 0.0).into();
     let mut ret_vec: Vec<Key> = Vec::new();
 
+    // TODO: Get FPS of monitor and use that as the max FPS
+    let maximum_wait = std::time::Duration::from_millis(1000 / 60);
+
     info!("Launching event loop");
     el.run(move |event, _, control_flow| {
-        *control_flow = Wait;
+        *control_flow = WaitUntil(std::time::Instant::now() + std::time::Duration::from_millis(16));
 
         #[allow(deprecated)]
         match event {

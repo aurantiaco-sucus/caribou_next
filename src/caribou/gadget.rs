@@ -1,6 +1,7 @@
+
 use std::ops::Deref;
 use std::sync::{Arc, Weak};
-use std::sync::atomic::{AtomicBool, Ordering};
+
 
 use crate::caribou::batch::{Batch, Brush};
 use crate::caribou::AsyncTask;
@@ -8,13 +9,12 @@ use crate::caribou::event::Event;
 use crate::caribou::focus::FocusEventInfo;
 use crate::caribou::input::{KeyEventInfo, MouseEventInfo};
 use crate::caribou::math::ScalarPair;
-use crate::caribou::native::Native;
-use crate::caribou::value::{DynValueMap, DynValue, Value};
+use crate::caribou::state::{Arbitrary, MutableArbitrary, State, StateMap, StateVec};
 use crate::caribou::window::WindowRef;
-use crate::cb_backend_skia_gl::{skia_font_default_cjk};
+use crate::cb_backend_skia_gl::skia_font_default_cjk;
 
 #[repr(transparent)]
-#[derive(Debug, Default, Clone)]
+#[derive(Clone)]
 pub struct Gadget {
     inner: Arc<GadgetInner>
 }
@@ -33,7 +33,7 @@ impl Deref for Gadget {
     }
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Default, Clone)]
 pub struct GadgetRef {
     inner: Weak<GadgetInner>
 }
@@ -55,26 +55,29 @@ impl GadgetRef {
         Weak::upgrade(&self.inner)
             .map(|inner| Gadget { inner })
     }
+
+    pub(crate) fn from_weak(inner: Weak<GadgetInner>) -> Self {
+        GadgetRef { inner }
+    }
 }
 
-#[derive(Debug)]
 pub struct GadgetInner {
     // Values
     // - Common
-    pub pos: Value<ScalarPair>,
-    pub dim: Value<ScalarPair>,
-    pub enabled: Value<bool>,
+    pub pos: State<ScalarPair>,
+    pub dim: State<ScalarPair>,
+    pub enabled: State<bool>,
     // - Hierarchy
-    pub parent: Value<GadgetParent>,
-    pub children: Value<Vec<Gadget>>,
+    pub parent: State<GadgetParent>,
+    pub children: StateVec<Gadget>,
     // - Appearance
-    pub brush: Value<Brush>,
-    pub font: Value<Native>,
+    pub brush: State<Brush>,
+    pub font: State<Arbitrary>,
     // - Focusing
-    pub propagate: Value<bool>,
+    pub propagate: State<bool>,
     // - Specialized
-    pub data: DynValue,
-    pub values: DynValueMap,
+    pub data: State<MutableArbitrary>,
+    pub values: StateMap<String, Arbitrary>,
     // Events
     // - Common
     pub draw: Event<dyn Fn() -> AsyncTask<Batch> + Send + Sync>,
@@ -85,7 +88,7 @@ pub struct GadgetInner {
     pub key: Event<dyn Fn(KeyEventInfo) -> AsyncTask<()> + Send + Sync>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum GadgetParent {
     None,
     Gadget(GadgetRef),
@@ -98,24 +101,40 @@ impl Default for GadgetParent {
     }
 }
 
-impl Default for GadgetInner {
+impl Default for Gadget {
     fn default() -> Self {
         Self {
-            pos: Value::default(),
-            dim: Value::default(),
-            enabled: Value::new(true),
-            parent: Value::new(GadgetParent::None),
-            children: Value::default(),
-            brush: Value::default(),
-            font: Value::new(skia_font_default_cjk(12.0).unwrap()),
-            data: DynValue::default(),
-            values: DynValueMap::default(),
-            draw: Event::default(),
-            action: Event::default(),
-            mouse: Event::default(),
-            focus: Event::default(),
-            key: Event::default(),
-            propagate: Default::default()
+            inner: Arc::new_cyclic(|weak| {
+                let back_ref = GadgetRef::from_weak(weak.clone());
+                GadgetInner {
+                    // Values
+                    // - Common
+                    pos: State::new_from(back_ref.clone(), (0.0, 0.0)),
+                    dim: State::new_from(back_ref.clone(), (0.0, 0.0)),
+                    enabled: State::new(back_ref.clone(), true),
+                    // - Hierarchy
+                    parent: State::new(back_ref.clone(), GadgetParent::None),
+                    children: StateVec::new(back_ref.clone()),
+                    // - Appearance
+                    brush: State::new(back_ref.clone(), Brush::default()),
+                    font: State::new_any(
+                        back_ref.clone(),
+                        skia_font_default_cjk(12.0).unwrap()),
+                    // - Focusing
+                    propagate: State::new(back_ref.clone(),true),
+                    // - Specialized
+                    data: State::new(back_ref.clone(), MutableArbitrary::placeholder()),
+                    values: StateMap::new(back_ref.clone()),
+                    // Events
+                    // - Common
+                    draw: Event::default(),
+                    action: Event::default(),
+                    // - Input
+                    mouse: Event::default(),
+                    focus: Event::default(),
+                    key: Event::default(),
+                }
+            })
         }
     }
 }
@@ -139,8 +158,8 @@ impl Gadget {
         let window = window
             .get().unwrap();
         let focused = window
-            .focus_tracker.focused.get().await;
-        match &*focused {
+            .focus_tracker.focused.get_cloned().await;
+        match focused {
             None => false,
             Some(gadget_ref) => match gadget_ref.get() {
                 None => false,

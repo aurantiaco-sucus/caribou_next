@@ -4,7 +4,7 @@ use std::ops::{Deref, DerefMut};
 
 
 use crate::caribou::math::{Scalar, ScalarPair};
-use crate::caribou::native::Native;
+use crate::caribou::state::Arbitrary;
 
 #[repr(transparent)]
 #[derive(Debug, Default, Clone)]
@@ -98,7 +98,7 @@ impl Painting {
         Self { ops }
     }
 
-    pub fn image(self, transform: Transform, image: Native) -> Self {
+    pub fn image(self, transform: Transform, image: Arbitrary) -> Self {
         let mut ops = self.ops;
         ops.push(BatchOp::Image { transform, image });
         Self { ops }
@@ -106,7 +106,7 @@ impl Painting {
 
     pub fn text(self,
                 transform: Transform,
-                text: String, font: Native,
+                text: String, font: Arbitrary,
                 align: TextAlign,
                 brush: Brush
     ) -> Self {
@@ -185,7 +185,7 @@ pub enum BatchOp {
     },
     Image {
         transform: Transform,
-        image: Native,
+        image: Arbitrary,
     },
     Text(Box<TextOp>),
     Batch {
@@ -198,7 +198,7 @@ pub enum BatchOp {
 pub struct TextOp {
     pub transform: Transform,
     pub text: String,
-    pub font: Native,
+    pub font: Arbitrary,
     pub brush: Brush,
     pub align: TextAlign,
 }

@@ -1,11 +1,10 @@
+use std::sync::RwLock;
 use crate::caribou::AsyncTask;
-use crate::caribou::batch::{begin_paint, Painting, Batch, Brush, Drawing, Material, Transform, begin_draw, TextAlign, SolidColor, Colors};
-use crate::caribou::focus::FocusEventInfo;
+use crate::caribou::batch::{Batch, begin_draw, begin_paint, Brush, Colors, Drawing, Material, Painting, SolidColor, TextAlign, Transform};
 use crate::caribou::gadget::Gadget;
 use crate::caribou::input::{Key, MouseEventInfo};
 use crate::caribou::math::ScalarPair;
-use crate::caribou::native::Native;
-use crate::caribou::value::{new_value, Value};
+use crate::caribou::state::{Arbitrary, State};
 
 pub struct Button;
 
@@ -21,15 +20,18 @@ impl Button {
             AsyncTask::wrap(async move {
                 let gadget = gr.get().unwrap();
                 // Gadget properties
-                let enabled = *gadget.enabled.get().await;
+                let enabled = gadget.enabled.get_cloned().await;
                 let focused = gadget.is_focused().await;
-                let dim = *gadget.dim.get().await;
+                let dim = gadget.dim.get_cloned().await;
                 let font = gadget.font.get().await;
-                let data = gadget.data.get::<ButtonData>().await;
+                let data = gadget
+                    .data.get().await;
+                let data = data
+                    .get::<ButtonData>().await;
                 // Data properties
                 let style = data.style.get().await;
-                let state = data.state;
-                let caption = data.caption.get().await;
+                let state = data.state.get_cloned().await;
+                let caption = data.caption.get_cloned().await;
                 begin_paint()
                     .with(|p| style.style_impl
                         .draw_backdrop(p,
@@ -56,22 +58,22 @@ impl Button {
             let gr = gr.clone();
             AsyncTask::wrap(async move {
                 let gadget = gr.get().unwrap();
-                let enabled = *gadget.enabled.get().await;
-                let mut data = gadget.data
-                    .get_mut::<ButtonData>().await;
+                let enabled = gadget.enabled.get_cloned().await;
+                let data = gadget.data.get().await;
+                let data = data.get::<ButtonData>().await;
                 if enabled {
                     match &info {
                         MouseEventInfo::Enter => {
-                            data.state = ButtonState::Hover;
+                            data.state.set(ButtonState::Hover).await;
                         }
                         MouseEventInfo::Leave => {
-                            data.state = ButtonState::Normal;
+                            data.state.set(ButtonState::Normal).await;
                         }
                         MouseEventInfo::Down { .. } => {
-                            data.state = ButtonState::Pressed;
+                            data.state.set(ButtonState::Pressed).await;
                         }
                         MouseEventInfo::Up { .. } => {
-                            data.state = ButtonState::Hover;
+                            data.state.set(ButtonState::Hover).await;
                             gadget.action.broadcast().await;
                         }
                         MouseEventInfo::Move { .. } => {}
@@ -96,14 +98,14 @@ impl Button {
             let gr = gr.clone();
             AsyncTask::wrap(async move {
                 let gadget = gr.get().unwrap();
-                let mut data = gadget.data
-                    .get_mut::<ButtonData>().await;
-                let enabled = *gadget.enabled.get().await;
+                let mut data = gadget.data.get().await;
+                let mut data = data.get::<ButtonData>().await;
+                let enabled = gadget.enabled.get_cloned().await;
                 if enabled {
                     if info.is_down && info.key == Key::Return {
-                        data.state = ButtonState::Pressed;
+                        data.state.set(ButtonState::Pressed).await;
                     } else if !info.is_down && info.key == Key::Return {
-                        data.state = ButtonState::Normal;
+                        data.state.set(ButtonState::Normal).await;
                         gadget.action.broadcast().await;
                     }
                     gadget.get_window().await.unwrap().get().unwrap().request_redraw();
@@ -114,11 +116,11 @@ impl Button {
         // Fill specialized data
 
         let data = ButtonData {
-            style: new_value(style),
-            caption: new_value(String::from("Button")),
-            state: ButtonState::Normal,
+            style: State::new(gadget.refer(), style),
+            caption: State::new(gadget.refer(), String::from("Button")),
+            state: State::new(gadget.refer(), ButtonState::Normal),
         };
-        gadget.data.set(data).await;
+        gadget.data.set_any(data).await;
 
         // Fill common properties
 
@@ -128,9 +130,9 @@ impl Button {
 }
 
 pub struct ButtonData {
-    pub style: Value<ButtonStyle>,
-    pub caption: Value<String>,
-    state: ButtonState,
+    pub style: State<ButtonStyle>,
+    pub caption: State<String>,
+    state: State<ButtonState>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -168,7 +170,7 @@ pub trait ButtonStyleImpl {
                     enabled: bool,
                     state: ButtonState,
                     text: String,
-                    font: Native) -> Painting;
+                    font: Arbitrary) -> Painting;
     fn draw_overlay(&self, painting: Painting,
                     dim: ScalarPair,
                     focused: bool) -> Painting;
@@ -232,7 +234,7 @@ impl ButtonStyleImpl for SimpleButtonStyleImpl {
                     enabled: bool,
                     state: ButtonState,
                     text: String,
-                    font: Native
+                    font: Arbitrary
     ) -> Painting {
         let filling = if enabled {
             match state {

@@ -1,8 +1,7 @@
 use crate::caribou::batch::{Colors, Material, Painting, SolidColor};
 use crate::caribou::gadget::Gadget;
 use crate::caribou::math::ScalarPair;
-use crate::caribou::native::Native;
-use crate::caribou::value::Value;
+use crate::caribou::state::{Arbitrary, State};
 
 pub struct TextBox;
 
@@ -14,7 +13,7 @@ impl TextBox {
 }
 
 pub struct TextBoxData {
-    pub content: Value<String>,
+    pub content: State<String>,
     state: TextBoxState,
 }
 
@@ -46,7 +45,7 @@ pub trait TextBoxStyleImpl {
                     enabled: bool,
                     focused: bool,
                     text: String,
-                    font: Native) -> Painting;
+                    font: Arbitrary) -> Painting;
     fn draw_overlay(&self,
                     painting: Painting,
                     dim: ScalarPair,

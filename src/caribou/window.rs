@@ -4,18 +4,19 @@ use std::sync::{Arc, Weak};
 use crate::caribou::AsyncTask;
 use crate::caribou::event::Event;
 use crate::caribou::focus::FocusTracker;
-use crate::caribou::gadget::{Gadget, GadgetInner, GadgetParent};
+use crate::caribou::gadget::{Gadget, GadgetInner, GadgetParent, GadgetRef};
 use crate::caribou::input::KeyEventInfo;
-use crate::caribou::value::Value;
+use crate::caribou::math::IntPair;
+use crate::caribou::state::State;
 
 #[repr(transparent)]
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Window {
     inner: Arc<WindowInner>
 }
 
 #[repr(transparent)]
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct WindowRef {
     inner: Weak<WindowInner>
 }
@@ -42,13 +43,12 @@ impl Deref for Window {
     }
 }
 
-#[derive(Debug)]
 pub struct WindowInner {
     // Values
-    pub title: Value<String>,
-    pub pos: Value<(i32, i32)>,
-    pub dim: Value<(u32, u32)>,
-    pub root: Value<Gadget>,
+    pub title: State<String>,
+    pub pos: State<IntPair>,
+    pub dim: State<IntPair>,
+    pub root: State<Gadget>,
     // Mechanisms
     pub focus_tracker: FocusTracker,
     backend: Backend,
@@ -88,12 +88,13 @@ pub trait WindowImpl: Send + Sync {
 
 impl Window {
     pub async fn new(backend: Backend, root: Gadget) -> Window {
+        let dummy = GadgetRef::from_weak(Weak::new());
         let window = Window {
             inner: Arc::new(WindowInner {
-                title: Value::new("Caribou".to_string()),
-                pos: Value::new((0, 0)),
-                dim: Value::new((800, 600)),
-                root: Value::new(root.clone()),
+                title: State::new_from(dummy.clone(), "Caribou"),
+                pos: State::new_from(dummy.clone(), (0, 0)),
+                dim: State::new_from(dummy.clone(), (800, 600)),
+                root: State::new_from(dummy.clone(), root.clone()),
                 focus_tracker: FocusTracker::default(),
                 backend,
                 key: Event::default(),

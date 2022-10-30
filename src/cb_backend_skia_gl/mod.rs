@@ -8,9 +8,8 @@ use std::sync::Arc;
 
 use crate::caribou::gadget::Gadget;
 use crate::caribou::math::Scalar;
-use crate::caribou::native::{Native, Wrapper};
 use crate::caribou::window::{Backend, Window, WindowImpl};
-use crate::cb_backend_skia_gl::runtime::{ENV_REGISTRY, skia_gl_launch};
+use crate::cb_backend_skia_gl::runtime::{ENV_REGISTRY, SkGLEnv2, skia_gl_launch};
 
 pub async fn skia_gl_create_window(root: Gadget) -> Window {
     let env_id = ENV_REGISTRY.read().unwrap().len();
@@ -38,23 +37,10 @@ impl WindowImpl for SkiaGLWindowImpl {
 }
 
 pub fn skia_request_redraw(env_id: usize) {
-    ENV_REGISTRY.read().unwrap()[env_id].windowed_context.window().request_redraw();
-}
-
-type WrappedSkiaFont = Arc<SkiaFont>;
-
-struct SkiaFontWrapper {
-    font: Arc<SkiaFont>
-}
-
-impl Wrapper for SkiaFontWrapper {
-    fn debug_fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        self.font.fmt(f)
-    }
-
-    fn get(&self) -> Box<dyn Any> {
-        Box::new(self.font.clone())
-    }
+    match ENV_REGISTRY.read().unwrap().get(env_id) {
+        None => {}
+        Some(env) => env.windowed_context.window().request_redraw(),
+    };
 }
 
 type SkiaFont = skia_safe::Font;
@@ -70,19 +56,19 @@ pub fn skia_create_font(
     width: SkiaFontWidth,
     slant: SkiaFontSlant,
     font_size: Scalar,
-) -> Option<Native> {
+) -> Option<SkiaFont> {
     let font_mgr = skia_safe::FontMgr::default();
     let typeface = font_mgr
         .match_family_style(family_name,
                             SkiaFontStyle::new(weight, width, slant))?;
     let font = SkiaFont::from_typeface(typeface, font_size);
-    Native::wrap(SkiaFontWrapper { font: Arc::new(font) }).into()
+    Some(font)
 }
 
 const DEFAULT_FAMILY_NAME_WINDOWS: &str = "Segoe UI";
 const DEFAULT_FAMILY_NAME_WINDOWS_CJK: &str = "微软雅黑";
 
-pub fn skia_font_default(size: Scalar) -> Option<Native> {
+pub fn skia_font_default(size: Scalar) -> Option<SkiaFont> {
     skia_create_font(DEFAULT_FAMILY_NAME_WINDOWS.to_string(),
                      SkiaFontWeight::NORMAL,
                      SkiaFontWidth::NORMAL,
@@ -90,7 +76,7 @@ pub fn skia_font_default(size: Scalar) -> Option<Native> {
                      size)
 }
 
-pub fn skia_font_default_cjk(size: Scalar) -> Option<Native> {
+pub fn skia_font_default_cjk(size: Scalar) -> Option<SkiaFont> {
     skia_create_font(DEFAULT_FAMILY_NAME_WINDOWS_CJK.to_string(),
                      SkiaFontWeight::NORMAL,
                      SkiaFontWidth::NORMAL,

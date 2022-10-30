@@ -5,7 +5,7 @@ use tokio::sync::RwLock;
 use crate::caribou::AsyncTask;
 use crate::caribou::gadget::{Gadget, GadgetParent, GadgetRef};
 use crate::caribou::input::Key;
-use crate::caribou::value::Value;
+use crate::caribou::state::State;
 use crate::caribou::window::{Window, WindowRef};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -14,11 +14,21 @@ pub enum FocusEventInfo {
     Lose
 }
 
-#[derive(Default, Debug, Clone)]
+#[derive(Clone)]
 pub struct FocusTracker {
-    pub focused: Value<Option<GadgetRef>>,
+    pub focused: State<Option<GadgetRef>>,
     pub manual_order: Arc<RwLock<Option<Vec<GadgetRef>>>>,
     pub window_ref: Arc<RwLock<Option<WindowRef>>>,
+}
+
+impl Default for FocusTracker {
+    fn default() -> Self {
+        FocusTracker {
+            focused: State::new(GadgetRef::default(), None),
+            manual_order: Arc::new(RwLock::new(None)),
+            window_ref: Arc::new(RwLock::new(None)),
+        }
+    }
 }
 
 impl FocusTracker {
@@ -30,7 +40,7 @@ impl FocusTracker {
             focus_cycle_manual(manual, &mut focused).await;
         } else {
             let window = self.window_ref.read().await;
-            let root = window.clone().unwrap().get().unwrap().root.get().await.clone();
+            let root = window.clone().unwrap().get().unwrap().root.get_cloned().await;
             focus_cycle_auto(&mut focused, root).await;
         }
     }
@@ -47,8 +57,8 @@ impl FocusTracker {
                         window.focus_tracker.cycle().await;
                     }
                 } else {
-                    let focused = window.focus_tracker.focused.get().await;
-                    if let Some(focused) = &*focused {
+                    let focused = window.focus_tracker.focused.get_cloned().await;
+                    if let Some(focused) = focused {
                         if let Some(focused) = focused.get() {
                             focused.key.broadcast(info).await;
                         }
@@ -120,11 +130,11 @@ async fn focus_cycle_manual(manual: &mut Vec<GadgetRef>, focused_fld: &mut Optio
 
 #[async_recursion]
 async fn focus_auto_backtrack(gadget: Gadget) -> Option<Gadget> {
-    match &*gadget.parent.get().await {
+    match gadget.parent.get_cloned().await {
         GadgetParent::None => None,
         GadgetParent::Gadget(gr) => {
             let parent = gr.get()?;
-            if *parent.propagate.get().await {
+            if parent.propagate.get_cloned().await {
                 match focus_auto_distribute(parent.clone(),
                                             Some(gadget.clone())).await
                 {
@@ -141,7 +151,7 @@ async fn focus_auto_backtrack(gadget: Gadget) -> Option<Gadget> {
 
 #[async_recursion]
 async fn focus_auto_distribute(gadget: Gadget, from: Option<Gadget>) -> Option<Gadget> {
-    let children = gadget.children.get().await;
+    let children = gadget.children.get_vec().await;
     let mut from = match from {
         None => 0,
         Some(from) =>
@@ -149,9 +159,9 @@ async fn focus_auto_distribute(gadget: Gadget, from: Option<Gadget>) -> Option<G
     };
     while from < children.len() {
         let child = &children[from];
-        if *child.propagate.get().await {
+        if child.propagate.get_cloned().await {
             return focus_auto_distribute(child.clone(), None).await;
-        } else if focus_test_accept(child).await {
+        } else if focus_test_accept(&child).await {
             return Some(child.clone());
         }
         from += 1;
@@ -166,7 +176,7 @@ async fn focus_try_choose(focused_fld: &mut Option<GadgetRef>, chosen: Gadget) {
 }
 
 async fn focus_try_root_distribute(focused_fld: &mut Option<GadgetRef>, root: Gadget) {
-    if !*root.propagate.get().await {
+    if !root.propagate.get_cloned().await {
         return;
     }
     let chosen = focus_auto_distribute(root, None).await;

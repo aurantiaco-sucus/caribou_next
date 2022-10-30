@@ -1,5 +1,4 @@
 use crate::caribou::batch::{Batch, BatchOp, Brush, Material, Path, PathOp, TextAlign, Transform};
-use crate::cb_backend_skia_gl::WrappedSkiaFont;
 
 type SkiaCanvas = skia_safe::Canvas;
 type SkiaPaint = skia_safe::Paint;
@@ -32,7 +31,7 @@ pub fn skia_render_batch(canvas: &mut SkiaCanvas, batch: Batch) {
             BatchOp::Text(top) => {
                 let checkpoint = canvas.save();
                 skia_apply_transform(canvas, top.transform);
-                let font = top.font.get::<WrappedSkiaFont>().unwrap();
+                let font = top.font.get::<SkiaFont>().unwrap();
                 let (stroke, fill) =
                     skia_brush_to_stroke_fill_paint(top.brush);
                 let (_, stroke_bounds) = font

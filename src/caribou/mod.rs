@@ -1,20 +1,20 @@
-use std::future::Future;
+use std::future::{Future, IntoFuture};
 use std::thread;
+use std::time::Duration;
 use log::info;
 use tokio::runtime::Runtime;
 use tokio::task::JoinHandle;
+use tokio::time::sleep;
 
 pub mod batch;
 pub mod math;
 pub mod gadget;
-pub mod value;
 pub mod event;
 pub mod window;
 pub mod layout;
-pub mod native;
 pub mod input;
 pub mod focus;
-pub mod timer;
+pub mod state;
 
 static mut TOKIO_RUNTIME: Option<Runtime> = None;
 
@@ -62,4 +62,29 @@ macro_rules! async_task {
     ($expr: expr) => {
         crate::caribou::AsyncTask::wrap(async move { $expr })
     };
+}
+
+pub enum ScheduleResult {
+    Repeat,
+    RepeatAfter(Duration),
+    Break,
+}
+
+pub fn schedule<F: 'static>(delay: Duration, proc: F)
+    where F: Fn() -> AsyncTask<ScheduleResult> + Send + Sync
+{
+    let proc = Box::new(proc);
+    async_runtime().spawn(async move {
+        let mut delay = delay;
+        let proc = proc;
+        loop {
+            sleep(delay).await;
+            let result = proc().spawn().await.unwrap();
+            match result {
+                ScheduleResult::Repeat => {}
+                ScheduleResult::RepeatAfter(new_delay) => delay = new_delay,
+                ScheduleResult::Break => break,
+            }
+        }
+    });
 }
