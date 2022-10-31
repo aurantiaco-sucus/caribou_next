@@ -1,4 +1,4 @@
-use std::future::{Future, IntoFuture};
+use std::future::{Future};
 use std::thread;
 use std::time::Duration;
 use log::info;

@@ -7,9 +7,9 @@ use crate::caribou::batch::{Batch, Brush};
 use crate::caribou::AsyncTask;
 use crate::caribou::event::Event;
 use crate::caribou::focus::FocusEventInfo;
-use crate::caribou::input::{KeyEventInfo, MouseEventInfo};
+use crate::caribou::input::{Key, KeyEventInfo, MouseButton, MouseEventInfo};
 use crate::caribou::math::ScalarPair;
-use crate::caribou::state::{Arbitrary, MutableArbitrary, State, StateMap, StateVec};
+use crate::caribou::state::{Arbitrary, MutableArbitrary, OptionalState, State, StateMap, StateVec};
 use crate::caribou::window::WindowRef;
 use crate::cb_backend_skia_gl::skia_font_default_cjk;
 
@@ -62,30 +62,29 @@ impl GadgetRef {
 }
 
 pub struct GadgetInner {
-    // Values
-    // - Common
+    // Common
     pub pos: State<ScalarPair>,
     pub dim: State<ScalarPair>,
     pub enabled: State<bool>,
-    // - Hierarchy
+    // Hierarchy
     pub parent: State<GadgetParent>,
     pub children: StateVec<Gadget>,
-    // - Appearance
+    // Appearance
     pub brush: State<Brush>,
     pub font: State<Arbitrary>,
-    // - Focusing
+    pub batch: State<Batch>,
+    // Focusing
     pub propagate: State<bool>,
-    // - Specialized
+    pub accept_focus: State<bool>,
+    pub lock_focus: State<bool>,
+    pub focused: State<bool>,
+    // Specialized
     pub data: State<MutableArbitrary>,
     pub values: StateMap<String, Arbitrary>,
-    // Events
-    // - Common
-    pub draw: Event<dyn Fn() -> AsyncTask<Batch> + Send + Sync>,
-    pub action: Event<dyn Fn() -> AsyncTask<()> + Send + Sync>,
-    // - Input
-    pub mouse: Event<dyn Fn(MouseEventInfo) -> AsyncTask<()> + Send + Sync>,
-    pub focus: Event<dyn Fn(FocusEventInfo) -> AsyncTask<bool> + Send + Sync>,
-    pub key: Event<dyn Fn(KeyEventInfo) -> AsyncTask<()> + Send + Sync>,
+    // Interactive
+    pub mouse_down: StateVec<MouseButton>,
+    pub mouse_pos: OptionalState<ScalarPair>,
+    pub key_down: StateVec<Key>,
 }
 
 #[derive(Clone)]
@@ -121,18 +120,19 @@ impl Default for Gadget {
                         back_ref.clone(),
                         skia_font_default_cjk(12.0).unwrap()),
                     // - Focusing
-                    propagate: State::new(back_ref.clone(),true),
+                    batch: State::new(back_ref.clone(), Batch::default()),
+                    propagate: State::new(back_ref.clone(), true),
                     // - Specialized
+                    accept_focus: State::new(back_ref.clone(), false),
+                    lock_focus: State::new(back_ref.clone(), false),
+                    focused: State::new(back_ref.clone(), false),
                     data: State::new(back_ref.clone(), MutableArbitrary::placeholder()),
                     values: StateMap::new(back_ref.clone()),
                     // Events
                     // - Common
-                    draw: Event::default(),
-                    action: Event::default(),
-                    // - Input
-                    mouse: Event::default(),
-                    focus: Event::default(),
-                    key: Event::default(),
+                    mouse_down: Default::default(),
+                    mouse_pos: OptionalState::new(back_ref.clone(), None),
+                    key_down: Default::default(),
                 }
             })
         }
@@ -158,7 +158,7 @@ impl Gadget {
         let window = window
             .get().unwrap();
         let focused = window
-            .focus_tracker.focused.get_cloned().await;
+            .cb_focus.focused.get_cloned().await;
         match focused {
             None => false,
             Some(gadget_ref) => match gadget_ref.get() {

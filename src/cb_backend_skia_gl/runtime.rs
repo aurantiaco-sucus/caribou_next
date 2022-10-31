@@ -18,10 +18,9 @@ use glutin::{
         ElementState,
         WindowEvent
     },
-    event_loop::ControlFlow::Wait
 };
 use glutin::event_loop::ControlFlow::WaitUntil;
-use log::{debug, info, warn};
+use log::{info};
 use skia_safe::{
     gpu::gl::{Format, FramebufferInfo},
     gpu::{BackendRenderTarget, DirectContext, SurfaceOrigin},

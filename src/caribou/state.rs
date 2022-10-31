@@ -180,13 +180,15 @@ impl<'a, T: Any + Send + Sync> DerefMut for MutableArbitraryWriteGuard<'a, T> {
     }
 }
 
-pub type Listeners<E> = Arc<RwLock<Vec<Box<dyn Fn(E) ->
-Pin<Box<dyn Future<Output=()> + Send + Sync>> + Send + Sync>>>>;
+pub type Listener<E> = Box<dyn Fn(E) -> Pin<Box<dyn Future<Output=()> + Send + Sync>> + Send + Sync>;
+pub type Listeners<E> = Arc<RwLock<Vec<Listener<E>>>>;
+pub type ListenerIdentities = Arc<RwLock<Vec<&'static str>>>;
 
 pub struct State<T: Send + Sync> {
     data: Arc<RwLock<T>>,
     gadget: GadgetRef,
     listeners: Listeners<StateChangedEvent<T>>,
+    identities: ListenerIdentities,
 }
 
 impl<T: Send + Sync> Clone for State<T> {
@@ -195,13 +197,14 @@ impl<T: Send + Sync> Clone for State<T> {
             data: self.data.clone(),
             gadget: self.gadget.clone(),
             listeners: self.listeners.clone(),
+            identities: self.identities.clone(),
         }
     }
 }
 
 pub struct StateChangedEvent<T: Send + Sync> {
-    state: State<T>,
-    gadget: GadgetRef,
+    pub state: State<T>,
+    pub gadget: GadgetRef,
 }
 
 impl<T: Send + Sync> Clone for StateChangedEvent<T> {
@@ -219,6 +222,7 @@ impl<T: Send + Sync> State<T> {
             data: Arc::new(RwLock::new(data)),
             gadget,
             listeners: Arc::new(RwLock::new(Vec::new())),
+            identities: Arc::new(RwLock::new(Vec::new())),
         }
     }
 
@@ -251,9 +255,18 @@ impl<T: Send + Sync> State<T> {
         self.set(data.into()).await;
     }
 
-    pub async fn listen(&self, listener: impl Fn(StateChangedEvent<T>) ->
+    pub async fn listen(&self, name: &'static str, listener: impl Fn(StateChangedEvent<T>) ->
         Pin<Box<dyn Future<Output=()> + Send + Sync>> + Send + Sync + 'static) {
         self.listeners.write().await.push(Box::new(listener));
+    }
+
+    pub async fn remove_listener(&self, name: &'static str) {
+        let mut listeners = self.listeners.write().await;
+        let mut identities = self.identities.write().await;
+        if let Some(index) = identities.iter().position(|identity| identity == &name) {
+            listeners.remove(index);
+            identities.remove(index);
+        }
     }
 
     pub async fn notify(&self) {
@@ -315,12 +328,242 @@ impl State<MutableArbitrary> {
     }
 }
 
+pub struct OptionalState<T: Send + Sync + Clone> {
+    data: Arc<RwLock<Option<T>>>,
+    gadget: GadgetRef,
+    on_set: Listeners<OptionalStateSetEvent<T>>,
+    on_unset: Listeners<OptionalStateUnsetEvent<T>>,
+    on_change: Listeners<OptionalStateChangedEvent<T>>,
+    id_set: ListenerIdentities,
+    id_unset: ListenerIdentities,
+    id_change: ListenerIdentities,
+}
+
+impl<T: Send + Sync + Clone> Clone for OptionalState<T> {
+    fn clone(&self) -> Self {
+        Self {
+            data: self.data.clone(),
+            gadget: self.gadget.clone(),
+            on_set: self.on_set.clone(),
+            on_unset: self.on_unset.clone(),
+            on_change: self.on_change.clone(),
+            id_set: Arc::new(Default::default()),
+            id_unset: Arc::new(Default::default()),
+            id_change: Arc::new(Default::default())
+        }
+    }
+}
+
+pub struct OptionalStateSetEvent<T: Send + Sync + Clone> {
+    pub state: OptionalState<T>,
+    pub gadget: GadgetRef,
+    pub value: T,
+}
+
+impl<T: Send + Sync + Clone> Clone for OptionalStateSetEvent<T> {
+    fn clone(&self) -> Self {
+        Self {
+            state: self.state.clone(),
+            gadget: self.gadget.clone(),
+            value: self.value.clone(),
+        }
+    }
+}
+
+pub struct OptionalStateUnsetEvent<T: Send + Sync + Clone> {
+    pub state: OptionalState<T>,
+    pub last_value: T,
+    pub gadget: GadgetRef,
+}
+
+impl<T: Send + Sync + Clone> Clone for OptionalStateUnsetEvent<T> {
+    fn clone(&self) -> Self {
+        Self {
+            state: self.state.clone(),
+            last_value: self.last_value.clone(),
+            gadget: self.gadget.clone(),
+        }
+    }
+}
+
+pub struct OptionalStateChangedEvent<T: Send + Sync + Clone> {
+    pub state: OptionalState<T>,
+    pub last_value: T,
+    pub new_value: T,
+    pub gadget: GadgetRef,
+}
+
+impl<T: Send + Sync + Clone> Clone for OptionalStateChangedEvent<T> {
+    fn clone(&self) -> Self {
+        Self {
+            state: self.state.clone(),
+            last_value: self.last_value.clone(),
+            new_value: self.new_value.clone(),
+            gadget: self.gadget.clone(),
+        }
+    }
+}
+
+impl<T: Send + Sync + Clone> OptionalState<T> {
+    pub fn new(gadget: GadgetRef, data: Option<T>) -> Self {
+        Self {
+            data: Arc::new(RwLock::new(data)),
+            gadget,
+            on_set: Listeners::default(),
+            on_unset: Listeners::default(),
+            on_change: Listeners::default(),
+            id_set: Arc::new(Default::default()),
+            id_unset: Arc::new(Default::default()),
+            id_change: Arc::new(Default::default())
+        }
+    }
+
+    pub fn new_from<U: Into<Option<T>>>(gadget: GadgetRef, data: U) -> Self {
+        Self::new(gadget, data.into())
+    }
+
+    pub fn new_empty(gadget: GadgetRef) -> Self {
+        Self::new(gadget, None)
+    }
+
+    pub async fn get(&self) -> Option<T> {
+        self.data.read().await.clone()
+    }
+
+    pub async fn put(&self, data: T) {
+        let mut lock = self.data.write().await;
+        let old_value = lock.take();
+        *lock = Some(data.clone());
+        if old_value.is_none() {
+            self.notify_set(data).await;
+        } else {
+            self.notify_change(old_value.unwrap(), data).await;
+        }
+    }
+
+    pub async fn put_from<U: Into<T>>(&self, data: U) {
+        self.put(data.into()).await;
+    }
+
+    pub async fn take(&self) -> Option<T> {
+        let mut lock = self.data.write().await;
+        let data = lock.take();
+        if data.is_some() {
+            self.notify_unset(data.clone().unwrap()).await;
+        }
+        data
+    }
+
+    pub async fn set(&self, data: Option<T>) {
+        let mut lock = self.data.write().await;
+        let last_value = lock.take();
+        *lock = data.clone();
+        if last_value.is_some() && data.is_some() {
+            self.notify_change(last_value.unwrap(), data.unwrap()).await;
+        } else if last_value.is_some() && data.is_none() {
+            self.notify_unset(last_value.unwrap()).await;
+        } else if data.is_some() && last_value.is_none() {
+            self.notify_set(data.unwrap()).await;
+        }
+    }
+
+    pub async fn set_from<U: Into<Option<T>>>(&self, data: U) {
+        self.set(data.into()).await;
+    }
+    
+    pub async fn listen_set(&self, name: &'static str, listener: impl Fn(OptionalStateSetEvent<T>)
+        -> Pin<Box<dyn Future<Output=()> + Send + Sync>> + Send + Sync + 'static)
+    {
+        self.on_set.write().await.push(Box::new(listener));
+        self.id_set.write().await.push(name);
+    }
+    
+    pub async fn listen_unset(&self, name: &'static str, listener: impl Fn(OptionalStateUnsetEvent<T>)
+        -> Pin<Box<dyn Future<Output=()> + Send + Sync>> + Send + Sync + 'static)
+    {
+        self.on_unset.write().await.push(Box::new(listener));
+        self.id_unset.write().await.push(name);
+    }
+    
+    pub async fn listen_change(&self, name: &'static str, listener: impl Fn(OptionalStateChangedEvent<T>)
+        -> Pin<Box<dyn Future<Output=()> + Send + Sync>> + Send + Sync + 'static)
+    {
+        self.on_change.write().await.push(Box::new(listener));
+        self.id_change.write().await.push(name);
+    }
+    
+    pub async fn remove_listener_set(&self, name: &'static str) {
+        let mut listeners = self.on_set.write().await;
+        let mut ids = self.id_set.write().await;
+        let index = ids.iter().position(|id| *id == name).unwrap();
+        listeners.remove(index);
+        ids.remove(index);
+    }
+    
+    pub async fn remove_listener_unset(&self, name: &'static str) {
+        let mut listeners = self.on_unset.write().await;
+        let mut ids = self.id_unset.write().await;
+        let index = ids.iter().position(|id| *id == name).unwrap();
+        listeners.remove(index);
+        ids.remove(index);
+    }
+    
+    pub async fn remove_listener_change(&self, name: &'static str) {
+        let mut listeners = self.on_change.write().await;
+        let mut ids = self.id_change.write().await;
+        let index = ids.iter().position(|id| *id == name).unwrap();
+        listeners.remove(index);
+        ids.remove(index);
+    }
+
+    pub async fn notify_set(&self, value: T) {
+        let event = OptionalStateSetEvent {
+            state: self.clone(),
+            gadget: self.gadget.clone(),
+            value,
+        };
+        for listener in self.on_set.read().await.iter() {
+            async_runtime().spawn(listener(event.clone()));
+        }
+    }
+
+    pub async fn notify_change(&self, last_value: T, new_value: T) {
+        let event = OptionalStateChangedEvent {
+            state: self.clone(),
+            gadget: self.gadget.clone(),
+            last_value,
+            new_value,
+        };
+        for listener in self.on_change.read().await.iter() {
+            async_runtime().spawn(listener(event.clone()));
+        }
+    }
+
+    pub async fn notify_unset(&self, last_value: T) {
+        let event = OptionalStateUnsetEvent {
+            state: self.clone(),
+            gadget: self.gadget.clone(),
+            last_value,
+        };
+        for listener in self.on_unset.read().await.iter() {
+            async_runtime().spawn(listener(event.clone()));
+        }
+    }
+
+    pub async fn is_set(&self) -> bool {
+        self.data.read().await.is_some()
+    }
+}
+
 pub struct StateVec<T: Send + Sync + Clone> {
     data: Arc<RwLock<Vec<T>>>,
     gadget: GadgetRef,
     on_add: Listeners<StateVecAddEvent<T>>,
     on_set: Listeners<StateVecSetEvent<T>>,
     on_remove: Listeners<StateVecRemoveEvent<T>>,
+    id_add: ListenerIdentities,
+    id_set: ListenerIdentities,
+    id_remove: ListenerIdentities,
 }
 
 impl<T: Send + Sync + Clone> Clone for StateVec<T> {
@@ -331,6 +574,9 @@ impl<T: Send + Sync + Clone> Clone for StateVec<T> {
             on_add: self.on_add.clone(),
             on_set: self.on_set.clone(),
             on_remove: self.on_remove.clone(),
+            id_add: self.id_add.clone(),
+            id_set: self.id_set.clone(),
+            id_remove: self.id_remove.clone(),
         }
     }
 }
@@ -343,6 +589,9 @@ impl<T: Send + Sync + Clone> Default for StateVec<T> {
             on_add: Arc::new(RwLock::new(Vec::new())),
             on_set: Arc::new(RwLock::new(Vec::new())),
             on_remove: Arc::new(RwLock::new(Vec::new())),
+            id_add: Arc::new(RwLock::new(Vec::new())),
+            id_set: Arc::new(RwLock::new(Vec::new())),
+            id_remove: Arc::new(RwLock::new(Vec::new())),
         }
     }
 }
@@ -410,7 +659,10 @@ impl<T: Send + Sync + Clone> StateVec<T> {
             gadget,
             on_add: Arc::new(Default::default()),
             on_set: Arc::new(Default::default()),
-            on_remove: Arc::new(Default::default())
+            on_remove: Arc::new(Default::default()),
+            id_add: Arc::new(Default::default()),
+            id_set: Arc::new(Default::default()),
+            id_remove: Arc::new(Default::default())
         }
     }
 
@@ -456,29 +708,67 @@ impl<T: Send + Sync + Clone> StateVec<T> {
         self.set(index, data.into()).await;
     }
 
-    pub async fn remove(&self, index: usize) -> T {
+    pub async fn remove_at(&self, index: usize) -> T {
         let mut lock = self.data.write().await;
         let old_value = lock.remove(index);
         self.notify_remove(index, old_value.clone()).await;
         old_value
     }
 
-    pub async fn listen_add(&self, listener: impl Fn(StateVecAddEvent<T>)
+    pub async fn remove(&self, data: &T) -> Option<T> where T: PartialEq {
+        let mut lock = self.data.write().await;
+        let index = lock.iter().position(|x| x == data)?;
+        let old_value = lock.remove(index);
+        self.notify_remove(index, old_value.clone()).await;
+        Some(old_value)
+    }
+
+    pub async fn listen_add(&self, name: &'static str, listener: impl Fn(StateVecAddEvent<T>)
         -> Pin<Box<dyn Future<Output=()> + Send + Sync>> + Send + Sync + 'static)
     {
         self.on_add.write().await.push(Box::new(listener));
+        self.id_add.write().await.push(name);
     }
 
-    pub async fn listen_set(&self, listener: impl Fn(StateVecSetEvent<T>)
+    pub async fn listen_set(&self, name: &'static str, listener: impl Fn(StateVecSetEvent<T>)
         -> Pin<Box<dyn Future<Output=()> + Send + Sync>> + Send + Sync + 'static)
     {
         self.on_set.write().await.push(Box::new(listener));
+        self.id_set.write().await.push(name);
     }
 
-    pub async fn listen_remove(&self, listener: impl Fn(StateVecRemoveEvent<T>)
+    pub async fn listen_remove(&self, name: &'static str, listener: impl Fn(StateVecRemoveEvent<T>)
         -> Pin<Box<dyn Future<Output=()> + Send + Sync>> + Send + Sync + 'static)
     {
         self.on_remove.write().await.push(Box::new(listener));
+        self.id_remove.write().await.push(name);
+    }
+    
+    pub async fn remove_listener_add(&self, name: &'static str) {
+        let mut on_add = self.on_add.write().await;
+        let mut id_on_add = self.id_add.write().await;
+        if let Some(index) = id_on_add.iter().position(|x| *x == name) {
+            on_add.remove(index);
+            id_on_add.remove(index);
+        }
+    }
+    
+    pub async fn remove_listener_set(&self, name: &'static str) {
+        let mut on_set = self.on_set.write().await;
+        let mut id_on_set = self.id_set.write().await;
+        if let Some(index) = id_on_set.iter().position(|x| *x == name) {
+            on_set.remove(index);
+            id_on_set.remove(index);
+        }
+    }
+    
+    pub async fn remove_listener_remove(&self, name: &'static str) {
+        let mut on_remove = self.on_remove.write().await;
+        let mut id_on_remove = self.id_remove.write().await;
+        if let Some(index) = id_on_remove.iter().position(|x| *x == name) {
+            on_remove.remove(index);
+            id_on_remove.remove(index);
+        }
     }
 
     pub async fn notify_add(&self, index: usize, new_value: T) {
@@ -517,12 +807,20 @@ impl<T: Send + Sync + Clone> StateVec<T> {
             async_runtime().spawn(listener(event.clone()));
         }
     }
+
+    pub async fn clear(&self) {
+        let mut lock = self.data.write().await;
+        while let Some(value) = lock.pop() {
+            self.notify_remove(lock.len(), value).await;
+        }
+    }
 }
 
 pub struct StateMap<K: Send + Sync + Clone + Eq + Hash, V: Send + Sync + Clone> {
     data: Arc<RwLock<HashMap<K, V>>>,
     gadget: GadgetRef,
     listeners: Listeners<StateMapEvent<K, V>>,
+    identities: ListenerIdentities,
 }
 
 impl<K: Send + Sync + Clone + Eq + Hash, V: Send + Sync + Clone>
@@ -532,6 +830,7 @@ Clone for StateMap<K, V> {
             data: self.data.clone(),
             gadget: self.gadget.clone(),
             listeners: self.listeners.clone(),
+            identities: self.identities.clone(),
         }
     }
 }
@@ -543,6 +842,7 @@ Default for StateMap<K, V> {
             data: Arc::new(RwLock::new(HashMap::new())),
             gadget: GadgetRef::default(),
             listeners: Default::default(),
+            identities: Default::default(),
         }
     }
 }
@@ -575,6 +875,7 @@ StateMap<K, V> {
             data: Arc::new(RwLock::new(HashMap::new())),
             gadget,
             listeners: Default::default(),
+            identities: Arc::new(Default::default())
         }
     }
 
@@ -610,10 +911,20 @@ StateMap<K, V> {
         old_value
     }
 
-    pub async fn listen(&self, listener: impl Fn(StateMapEvent<K, V>)
+    pub async fn listen(&self, name: &'static str, listener: impl Fn(StateMapEvent<K, V>)
         -> Pin<Box<dyn Future<Output=()> + Send + Sync>> + Send + Sync + 'static)
     {
         self.listeners.write().await.push(Box::new(listener));
+        self.identities.write().await.push(name);
+    }
+    
+    pub async fn remove_listener(&self, name: &'static str) {
+        let mut listeners = self.listeners.write().await;
+        let mut identities = self.identities.write().await;
+        if let Some(index) = identities.iter().position(|x| *x == name) {
+            listeners.remove(index);
+            identities.remove(index);
+        }
     }
 
     pub async fn notify(&self, key: K, old_value: Option<V>, new_value: Option<V>) {

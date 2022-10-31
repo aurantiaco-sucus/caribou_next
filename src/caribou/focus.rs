@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 use async_recursion::async_recursion;
 use tokio::sync::RwLock;
 use crate::caribou::AsyncTask;
@@ -15,15 +14,15 @@ pub enum FocusEventInfo {
 }
 
 #[derive(Clone)]
-pub struct FocusTracker {
+pub struct CaribouFocus {
     pub focused: State<Option<GadgetRef>>,
     pub manual_order: Arc<RwLock<Option<Vec<GadgetRef>>>>,
     pub window_ref: Arc<RwLock<Option<WindowRef>>>,
 }
 
-impl Default for FocusTracker {
+impl Default for CaribouFocus {
     fn default() -> Self {
-        FocusTracker {
+        CaribouFocus {
             focused: State::new(GadgetRef::default(), None),
             manual_order: Arc::new(RwLock::new(None)),
             window_ref: Arc::new(RwLock::new(None)),
@@ -31,7 +30,7 @@ impl Default for FocusTracker {
     }
 }
 
-impl FocusTracker {
+impl CaribouFocus {
     pub async fn cycle(&self) {
         let mut manual = self.manual_order.write().await;
         let mut focused = self.focused.get_mut().await;
@@ -54,10 +53,10 @@ impl FocusTracker {
                 let window = wr.get().unwrap();
                 if info.key == Key::Tab {
                     if info.is_down {
-                        window.focus_tracker.cycle().await;
+                        window.cb_focus.cycle().await;
                     }
                 } else {
-                    let focused = window.focus_tracker.focused.get_cloned().await;
+                    let focused = window.cb_focus.focused.get_cloned().await;
                     if let Some(focused) = focused {
                         if let Some(focused) = focused.get() {
                             focused.key.broadcast(info).await;
@@ -70,15 +69,11 @@ impl FocusTracker {
 }
 
 async fn focus_test_accept(gadget: &Gadget) -> bool {
-    gadget.focus
-        .gather(FocusEventInfo::Gain).await
-        .into_iter().all(|x| x)
+    gadget.accept_focus.get_cloned().await
 }
 
 async fn focus_test_release(gadget: &Gadget) -> bool {
-    gadget.focus
-        .gather(FocusEventInfo::Lose).await
-        .into_iter().all(|x| x)
+    !gadget.lock_focus.get_cloned().await
 }
 
 async fn focus_clean_manual(manual: &mut Vec<GadgetRef>) {

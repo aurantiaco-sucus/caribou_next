@@ -1,6 +1,5 @@
-use std::sync::RwLock;
 use crate::caribou::AsyncTask;
-use crate::caribou::batch::{Batch, begin_draw, begin_paint, Brush, Colors, Drawing, Material, Painting, SolidColor, TextAlign, Transform};
+use crate::caribou::batch::{begin_draw, begin_paint, Brush, Colors, Material, Painting, SolidColor, TextAlign, Transform};
 use crate::caribou::gadget::Gadget;
 use crate::caribou::input::{Key, MouseEventInfo};
 use crate::caribou::math::ScalarPair;
@@ -98,8 +97,8 @@ impl Button {
             let gr = gr.clone();
             AsyncTask::wrap(async move {
                 let gadget = gr.get().unwrap();
-                let mut data = gadget.data.get().await;
-                let mut data = data.get::<ButtonData>().await;
+                let data = gadget.data.get().await;
+                let data = data.get::<ButtonData>().await;
                 let enabled = gadget.enabled.get_cloned().await;
                 if enabled {
                     if info.is_down && info.key == Key::Return {

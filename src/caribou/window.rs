@@ -1,13 +1,11 @@
-use std::fmt::{Debug, Formatter, Pointer, Write};
+use std::fmt::{Debug, Formatter, Pointer};
 use std::ops::Deref;
 use std::sync::{Arc, Weak};
-use crate::caribou::AsyncTask;
-use crate::caribou::event::Event;
-use crate::caribou::focus::FocusTracker;
-use crate::caribou::gadget::{Gadget, GadgetInner, GadgetParent, GadgetRef};
-use crate::caribou::input::KeyEventInfo;
-use crate::caribou::math::IntPair;
-use crate::caribou::state::State;
+use crate::caribou::focus::CaribouFocus;
+use crate::caribou::gadget::{Gadget, GadgetParent, GadgetRef};
+use crate::caribou::input::{Key, KeyEventInfo, MouseButton};
+use crate::caribou::math::{IntPair, ScalarPair};
+use crate::caribou::state::{OptionalState, State, StateVec};
 
 #[repr(transparent)]
 #[derive(Clone)]
@@ -49,11 +47,14 @@ pub struct WindowInner {
     pub pos: State<IntPair>,
     pub dim: State<IntPair>,
     pub root: State<Gadget>,
+    pub mouse_down: StateVec<MouseButton>,
+    pub mouse_pos: OptionalState<ScalarPair>,
+    pub key_down: StateVec<Key>,
     // Mechanisms
-    pub focus_tracker: FocusTracker,
+    pub cb_focus: CaribouFocus,
     backend: Backend,
     // Events
-    pub key: Event<dyn Fn(KeyEventInfo) -> AsyncTask<()> + Send + Sync>,
+    //pub key: Event<dyn Fn(KeyEventInfo) -> AsyncTask<()> + Send + Sync>,
 }
 
 pub struct Backend {
@@ -95,12 +96,14 @@ impl Window {
                 pos: State::new_from(dummy.clone(), (0, 0)),
                 dim: State::new_from(dummy.clone(), (800, 600)),
                 root: State::new_from(dummy.clone(), root.clone()),
-                focus_tracker: FocusTracker::default(),
+                mouse_down: StateVec::new(dummy.clone()),
+                mouse_pos: OptionalState::new_empty(dummy.clone()),
+                key_down: Default::default(),
+                cb_focus: CaribouFocus::default(),
                 backend,
-                key: Event::default(),
             })
         };
-        window.focus_tracker.attach_tab_listener(&window).await;
+        window.cb_focus.attach_tab_listener(&window).await;
         root.parent.set(GadgetParent::Window(window.refer())).await;
         window
     }

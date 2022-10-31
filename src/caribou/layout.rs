@@ -1,12 +1,7 @@
-use std::sync::RwLock;
-use log::debug;
-use crate::async_task;
-use crate::caribou::batch::{Batch, BatchFlattening, BatchOp, begin_paint, Painting, Transform};
-use crate::caribou::{async_runtime, AsyncTask};
-use crate::caribou::gadget::{Gadget, GadgetParent};
-use crate::caribou::input::MouseEventInfo;
-use crate::caribou::math::{Region, ScalarPair};
-use crate::caribou::state::State;
+use crate::caribou::batch::{begin_paint};
+use crate::caribou::gadget::{Gadget, GadgetParent, GadgetRef};
+use crate::caribou::math::{Region};
+use crate::caribou::state::{Listener, State};
 
 pub struct Layout;
 
@@ -14,105 +9,94 @@ impl Layout {
     pub async fn create() -> Gadget {
         let gadget = Gadget::default();
 
-        // Handle events
+        gadget.children.listen_add(
+            "layout_children_add",
+            |event| { Box::pin(async move {
+                let new_child = event.new_value;
+                new_child.batch.listen("layout_child_batch",
+                                       layout_child_listen(event.gadget.clone()));
+                new_child.pos.listen("layout_child_pos",
+                                     layout_child_listen(event.gadget.clone()));
+            }) });
 
-        let gr = gadget.refer();
-        gadget.draw.handle(move || {
-            let gadget = gr.get().unwrap();
-            AsyncTask::wrap(async move {
-                let mut artist = begin_paint();
+        gadget.children.listen_remove(
+            "layout_children_remove",
+            |event| { Box::pin(async move {
+                let old_child = event.old_value;
+                old_child.batch.remove_listener("layout_child_batch");
+                old_child.pos.remove_listener("layout_child_pos");
+                layout_update_batch(event.gadget.get().unwrap()).await;
+            }) });
+
+        gadget.mouse_pos.listen_set(
+            "layout_mouse_pos_set",
+            |event| { Box::pin(async move {
+                let gadget = event.gadget.get().unwrap();
+                let pos = event.value;
                 let children = gadget.children.get_vec().await;
                 for child in children.iter() {
-                    artist = artist.batch(
-                        child.pos.get().await.into_translate(),
-                        child.draw.gather().await.flatten());
+                    let child_pos = child.pos.get_cloned().await;
+                    let child_dim = child.dim.get_cloned().await;
+                    let region = Region::from_origin_size(child_pos, child_dim);
+                    if region.contains(pos) {
+                        child.mouse_pos.put(pos - child_pos).await;
+                    }
                 }
-                artist.finish()
-            })
-        }).await;
+            }) });
 
-        let gr = gadget.refer();
-        gadget.mouse.handle(move |info| {
-            let gadget = gr.get().unwrap();
-            AsyncTask::wrap(async move {
-                let data = gadget
-                    .data.get_cloned().await;
-                let data = data
-                    .get_mut::<LayoutData>().await;
-                match &info {
-                    MouseEventInfo::Enter => {}
-                    MouseEventInfo::Leave => {
-                        if let Some(child) = data.hovering.get_cloned().await {
-                            child.mouse.broadcast(info.clone()).await;
-                            data.hovering.set(None).await;
-                        }
-                    }
-                    MouseEventInfo::Down {
-                        button, pos, modifiers
-                    } => {
-                        if let Some(child) = data.hovering.get_cloned().await {
-                            let child_pos = *child.pos.get().await;
-                            child.mouse.broadcast(MouseEventInfo::Down {
-                                button: *button,
-                                pos: *pos - child_pos,
-                                modifiers: modifiers.clone(),
-                            }).await;
-                        }
-                    }
-                    MouseEventInfo::Up {
-                        button, pos, modifiers
-                    } => {
-                        if let Some(child) = data.hovering.get_cloned().await {
-                            let child_pos = *child.pos.get().await;
-                            child.mouse.broadcast(MouseEventInfo::Up {
-                                button: *button,
-                                pos: *pos - child_pos,
-                                modifiers: modifiers.clone(),
-                            }).await;
-                        }
-                    }
-                    MouseEventInfo::Move {
-                        pos, modifiers
-                    } => {
-                        // Check if there is a child being hovered
-                        let children = gadget.children.get_vec().await;
-                        for child in children.iter().rev() {
-                            let child_pos = *child.pos.get().await;
-                            let child_dim = *child.dim.get().await;
-                            let region = Region::from_origin_size(
-                                child_pos, child_dim);
-                            if region.contains(*pos) {
-                                if let Some(hovering) = data.hovering.get_cloned().await {
-                                    if hovering == *child {
-                                        // The mouse is still hovering current child
-                                        hovering.mouse.broadcast(
-                                            MouseEventInfo::Move {
-                                                pos: *pos - child_pos,
-                                                modifiers: modifiers.clone()
-                                            }).await;
-                                        return;
-                                    } else {
-                                        // The mouse is no longer hovering current child
-                                        hovering.mouse.broadcast(
-                                            MouseEventInfo::Leave).await;
-                                    }
-                                }
-                                // The mouse is now hovering new child
-                                child.mouse.broadcast(
-                                    MouseEventInfo::Enter).await;
-                                data.hovering.set(Some(child.clone())).await;
-                                return;
-                            }
-                        }
-                        // The mouse is not hovering any child
-                        if let Some(hovering) = data.hovering.get_cloned().await {
-                            hovering.mouse.broadcast(MouseEventInfo::Leave).await;
-                            data.hovering.set(None).await;
-                        }
+        gadget.mouse_pos.listen_change(
+            "layout_mouse_pos_change",
+            |event| { Box::pin(async move {
+                let gadget = event.gadget.get().unwrap();
+                let pos = event.new_value;
+                let children = gadget.children.get_vec().await;
+                for child in children.iter() {
+                    let child_pos = child.pos.get_cloned().await;
+                    let child_dim = child.dim.get_cloned().await;
+                    let region = Region::from_origin_size(child_pos, child_dim);
+                    if region.contains(pos) {
+                        child.mouse_pos.put(pos - child_pos).await;
+                    } else {
+                        child.mouse_down.clear().await;
+                        child.mouse_pos.take().await;
                     }
                 }
-            })
-        }).await;
+            }) });
+
+        gadget.mouse_pos.listen_unset(
+            "layout_mouse_pos_unset",
+            |event| { Box::pin(async move {
+                let gadget = event.gadget.get().unwrap();
+                let children = gadget.children.get_vec().await;
+                for child in children.iter() {
+                    child.mouse_down.clear().await;
+                    child.mouse_pos.take().await;
+                }
+            }) });
+
+        gadget.mouse_down.listen_add(
+            "layout_mouse_down_add",
+            |event| { Box::pin(async move {
+                let gadget = event.gadget.get().unwrap();
+                let children = gadget.children.get_vec().await;
+                for child in children.iter() {
+                    if child.mouse_pos.is_set().await {
+                        child.mouse_down.push(event.new_value).await;
+                    }
+                }
+            }) });
+
+        gadget.mouse_down.listen_remove(
+            "layout_mouse_down_remove",
+            |event| { Box::pin(async move {
+                let gadget = event.gadget.get().unwrap();
+                let children = gadget.children.get_vec().await;
+                for child in children.iter() {
+                    if child.mouse_pos.is_set().await {
+                        child.mouse_down.remove(&event.old_value).await;
+                    }
+                }
+            }) });
 
         // Fill specialized data
 
@@ -142,4 +126,22 @@ impl Layout {
 
 pub struct LayoutData {
     hovering: State<Option<Gadget>>,
+}
+
+async fn layout_update_batch(layout: Gadget) {
+    let children = layout.children.get_vec().await;
+    let mut artist = begin_paint();
+    for child in children.iter() {
+        artist = artist.batch(
+            child.pos.get().await.into_translate(),
+            child.batch.get_cloned().await
+        );
+    }
+    layout.batch.set(artist.finish()).await;
+}
+
+fn layout_child_listen<E: Send + Sync>(layout: GadgetRef) -> Listener<E> {
+    Box::new(move |event| Box::pin(async move {
+        layout_update_batch(layout.get().unwrap()).await;
+    }))
 }

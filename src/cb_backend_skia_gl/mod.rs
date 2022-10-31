@@ -2,14 +2,12 @@ pub mod runtime;
 pub mod input;
 pub mod batch;
 
-use std::any::Any;
 use std::fmt::{Debug, Formatter};
-use std::sync::Arc;
 
 use crate::caribou::gadget::Gadget;
 use crate::caribou::math::Scalar;
 use crate::caribou::window::{Backend, Window, WindowImpl};
-use crate::cb_backend_skia_gl::runtime::{ENV_REGISTRY, SkGLEnv2, skia_gl_launch};
+use crate::cb_backend_skia_gl::runtime::{ENV_REGISTRY, skia_gl_launch};
 
 pub async fn skia_gl_create_window(root: Gadget) -> Window {
     let env_id = ENV_REGISTRY.read().unwrap().len();

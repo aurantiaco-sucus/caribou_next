@@ -3,6 +3,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use crate::caribou::{AsyncTask};
 
+#[deprecated]
 pub struct Event<F: ?Sized + Send + Sync> {
     handlers: Arc<RwLock<Vec<Box<F>>>>,
 }
