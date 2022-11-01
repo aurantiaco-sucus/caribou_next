@@ -336,9 +336,10 @@ impl Brush {
         }
     }
 
-    pub fn from_stroke<S: Into<Material>>(stroke: S) -> Self {
+    pub fn from_stroke<S: Into<Material>>(stroke: S, width: Scalar) -> Self {
         Self {
             stroke: stroke.into(),
+            width,
             ..Default::default()
         }
     }

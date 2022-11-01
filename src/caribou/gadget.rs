@@ -4,10 +4,8 @@ use std::sync::{Arc, Weak};
 
 
 use crate::caribou::batch::{Batch, Brush};
-use crate::caribou::AsyncTask;
-use crate::caribou::event::Event;
-use crate::caribou::focus::FocusEventInfo;
-use crate::caribou::input::{Key, KeyEventInfo, MouseButton, MouseEventInfo};
+
+use crate::caribou::input::{DragInfo, Key, MouseButton};
 use crate::caribou::math::ScalarPair;
 use crate::caribou::state::{Arbitrary, MutableArbitrary, OptionalState, State, StateMap, StateVec};
 use crate::caribou::window::WindowRef;
@@ -81,10 +79,17 @@ pub struct GadgetInner {
     // Specialized
     pub data: State<MutableArbitrary>,
     pub values: StateMap<String, Arbitrary>,
-    // Interactive
+    // Input
     pub mouse_down: StateVec<MouseButton>,
     pub mouse_pos: OptionalState<ScalarPair>,
+    pub mouse_drag: StateVec<DragInfo>,
     pub key_down: StateVec<Key>,
+    // Textual
+    pub accept_text: State<bool>,
+    pub pre_edit: State<String>,
+    pub pre_edit_pos: State<usize>,
+    pub ime_pos: State<ScalarPair>,
+    pub commit: State<String>,
 }
 
 #[derive(Clone)]
@@ -102,40 +107,7 @@ impl Default for GadgetParent {
 
 impl Default for Gadget {
     fn default() -> Self {
-        Self {
-            inner: Arc::new_cyclic(|weak| {
-                let back_ref = GadgetRef::from_weak(weak.clone());
-                GadgetInner {
-                    // Values
-                    // - Common
-                    pos: State::new_from(back_ref.clone(), (0.0, 0.0)),
-                    dim: State::new_from(back_ref.clone(), (0.0, 0.0)),
-                    enabled: State::new(back_ref.clone(), true),
-                    // - Hierarchy
-                    parent: State::new(back_ref.clone(), GadgetParent::None),
-                    children: StateVec::new(back_ref.clone()),
-                    // - Appearance
-                    brush: State::new(back_ref.clone(), Brush::default()),
-                    font: State::new_any(
-                        back_ref.clone(),
-                        skia_font_default_cjk(12.0).unwrap()),
-                    // - Focusing
-                    batch: State::new(back_ref.clone(), Batch::default()),
-                    propagate: State::new(back_ref.clone(), true),
-                    // - Specialized
-                    accept_focus: State::new(back_ref.clone(), false),
-                    lock_focus: State::new(back_ref.clone(), false),
-                    focused: State::new(back_ref.clone(), false),
-                    data: State::new(back_ref.clone(), MutableArbitrary::placeholder()),
-                    values: StateMap::new(back_ref.clone()),
-                    // Events
-                    // - Common
-                    mouse_down: Default::default(),
-                    mouse_pos: OptionalState::new(back_ref.clone(), None),
-                    key_down: Default::default(),
-                }
-            })
-        }
+        Self { inner: gadget_default_inner() }
     }
 }
 
@@ -153,12 +125,14 @@ impl Gadget {
     }
 
     pub async fn is_focused(&self) -> bool {
-        let window = self
-            .get_window().await.unwrap();
+        let window = match self.get_window().await {
+            None => return false,
+            Some(val) => val,
+        };
         let window = window
             .get().unwrap();
         let focused = window
-            .cb_focus.focused.get_cloned().await;
+            .cb_focus.focused.get().await;
         match focused {
             None => false,
             Some(gadget_ref) => match gadget_ref.get() {
@@ -167,4 +141,37 @@ impl Gadget {
             }
         }
     }
+}
+
+fn gadget_default_inner() -> Arc<GadgetInner> {
+    Arc::new_cyclic(|weak| {
+        let back_ref = GadgetRef::from_weak(weak.clone());
+        GadgetInner {
+            pos: State::new_from(back_ref.clone(), (0.0, 0.0)),
+            dim: State::new_from(back_ref.clone(), (0.0, 0.0)),
+            enabled: State::new(back_ref.clone(), true),
+            parent: State::new(back_ref.clone(), GadgetParent::None),
+            children: StateVec::new(back_ref.clone()),
+            brush: State::new(back_ref.clone(), Brush::default()),
+            font: State::new_any(
+                back_ref.clone(),
+                skia_font_default_cjk(12.0).unwrap()),
+            batch: State::new(back_ref.clone(), Batch::default()),
+            propagate: State::new(back_ref.clone(), true),
+            accept_focus: State::new(back_ref.clone(), false),
+            lock_focus: State::new(back_ref.clone(), false),
+            focused: State::new(back_ref.clone(), false),
+            data: State::new(back_ref.clone(), MutableArbitrary::placeholder()),
+            values: StateMap::new(back_ref.clone()),
+            mouse_down: StateVec::new(back_ref.clone()),
+            mouse_pos: OptionalState::new(back_ref.clone(), None),
+            mouse_drag: StateVec::new(back_ref.clone()),
+            key_down: StateVec::new(back_ref.clone()),
+            accept_text: State::new(back_ref.clone(), false),
+            pre_edit: State::new(back_ref.clone(), String::new()),
+            pre_edit_pos: State::new(back_ref.clone(), 0),
+            ime_pos: State::new_from(back_ref.clone(), (0.0, 0.0)),
+            commit: State::new(back_ref.clone(), String::new()),
+        }
+    })
 }

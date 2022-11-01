@@ -1,3 +1,4 @@
+use log::info;
 use crate::caribou::batch::{begin_paint};
 use crate::caribou::gadget::{Gadget, GadgetParent, GadgetRef};
 use crate::caribou::math::{Region};
@@ -12,21 +13,25 @@ impl Layout {
         gadget.children.listen_add(
             "layout_children_add",
             |event| { Box::pin(async move {
+                info!("Child added.");
                 let new_child = event.new_value;
                 new_child.batch.listen("layout_child_batch",
-                                       layout_child_listen(event.gadget.clone()));
+                                       layout_child_listen(event.gadget.clone()))
+                    .await;
                 new_child.pos.listen("layout_child_pos",
-                                     layout_child_listen(event.gadget.clone()));
-            }) });
+                                     layout_child_listen(event.gadget.clone()))
+                    .await;
+                layout_update_batch(event.gadget.get().unwrap()).await;
+            }) }).await;
 
         gadget.children.listen_remove(
             "layout_children_remove",
             |event| { Box::pin(async move {
                 let old_child = event.old_value;
-                old_child.batch.remove_listener("layout_child_batch");
-                old_child.pos.remove_listener("layout_child_pos");
+                old_child.batch.remove_listener("layout_child_batch").await;
+                old_child.pos.remove_listener("layout_child_pos").await;
                 layout_update_batch(event.gadget.get().unwrap()).await;
-            }) });
+            }) }).await;
 
         gadget.mouse_pos.listen_set(
             "layout_mouse_pos_set",
@@ -42,7 +47,7 @@ impl Layout {
                         child.mouse_pos.put(pos - child_pos).await;
                     }
                 }
-            }) });
+            }) }).await;
 
         gadget.mouse_pos.listen_change(
             "layout_mouse_pos_change",
@@ -61,7 +66,7 @@ impl Layout {
                         child.mouse_pos.take().await;
                     }
                 }
-            }) });
+            }) }).await;
 
         gadget.mouse_pos.listen_unset(
             "layout_mouse_pos_unset",
@@ -72,7 +77,7 @@ impl Layout {
                     child.mouse_down.clear().await;
                     child.mouse_pos.take().await;
                 }
-            }) });
+            }) }).await;
 
         gadget.mouse_down.listen_add(
             "layout_mouse_down_add",
@@ -84,7 +89,7 @@ impl Layout {
                         child.mouse_down.push(event.new_value).await;
                     }
                 }
-            }) });
+            }) }).await;
 
         gadget.mouse_down.listen_remove(
             "layout_mouse_down_remove",
@@ -96,17 +101,15 @@ impl Layout {
                         child.mouse_down.remove(&event.old_value).await;
                     }
                 }
-            }) });
+            }) }).await;
 
         // Fill specialized data
-
         let data = LayoutData {
             hovering: State::new(gadget.refer(), None),
         };
         gadget.data.set_any(data).await;
 
         // Fill common properties
-
         gadget.dim.set_from((150.0, 150.0)).await;
         gadget.propagate.set(true).await;
 
@@ -137,11 +140,16 @@ async fn layout_update_batch(layout: Gadget) {
             child.batch.get_cloned().await
         );
     }
-    layout.batch.set(artist.finish()).await;
+    let batch = artist.finish();
+    // info!("Layout batch: {:?}", batch);
+    layout.batch.set(batch).await;
 }
 
 fn layout_child_listen<E: Send + Sync>(layout: GadgetRef) -> Listener<E> {
-    Box::new(move |event| Box::pin(async move {
-        layout_update_batch(layout.get().unwrap()).await;
-    }))
+    Box::new(move |event| {
+        let layout = layout.clone();
+        Box::pin(async move {
+            layout_update_batch(layout.get().unwrap()).await;
+        })
+    })
 }

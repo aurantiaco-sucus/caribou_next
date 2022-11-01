@@ -205,6 +205,7 @@ impl<T: Send + Sync> Clone for State<T> {
 pub struct StateChangedEvent<T: Send + Sync> {
     pub state: State<T>,
     pub gadget: GadgetRef,
+    pub old_value: Arc<T>
 }
 
 impl<T: Send + Sync> Clone for StateChangedEvent<T> {
@@ -212,6 +213,7 @@ impl<T: Send + Sync> Clone for StateChangedEvent<T> {
         Self {
             state: self.state.clone(),
             gadget: self.gadget.clone(),
+            old_value: self.old_value.clone(),
         }
     }
 }
@@ -245,13 +247,14 @@ impl<T: Send + Sync> State<T> {
         self.data.write().await
     }
 
-    pub async fn set(&self, data: T) where T: Clone {
+    pub async fn set(&self, data: T) {
         let mut lock = self.data.write().await;
-        *lock = data;
-        self.notify().await;
+        let old = mem::replace(&mut *lock, data);
+        drop(lock);
+        self.notify(old).await;
     }
 
-    pub async fn set_from<U: Into<T>>(&self, data: U) where T: Clone {
+    pub async fn set_from<U: Into<T>>(&self, data: U) {
         self.set(data.into()).await;
     }
 
@@ -264,15 +267,16 @@ impl<T: Send + Sync> State<T> {
         let mut listeners = self.listeners.write().await;
         let mut identities = self.identities.write().await;
         if let Some(index) = identities.iter().position(|identity| identity == &name) {
-            listeners.remove(index);
+            let _ = listeners.remove(index);
             identities.remove(index);
         }
     }
 
-    pub async fn notify(&self) {
+    pub async fn notify(&self, old: T) {
         let event = StateChangedEvent {
             state: self.clone(),
             gadget: self.gadget.clone(),
+            old_value: Arc::new(old)
         };
         let listeners = self.listeners.read().await;
         for listener in listeners.iter() {
@@ -298,8 +302,8 @@ impl State<Arbitrary> {
 
     pub async fn set_any<T: Any + Send + Sync>(&self, data: T) {
         let mut lock = self.data.write().await;
-        *lock = Arbitrary::new(data);
-        self.notify().await;
+        let old = mem::replace(&mut *lock, Arbitrary::new(data));
+        self.notify(old).await;
     }
 }
 
@@ -323,8 +327,8 @@ impl State<MutableArbitrary> {
 
     pub async fn set_any<T: Any + Send + Sync>(&self, data: T) {
         let mut lock = self.data.write().await;
-        *lock = MutableArbitrary::new(data);
-        self.notify().await;
+        let old = mem::replace(&mut *lock, MutableArbitrary::new(data));
+        self.notify(old).await;
     }
 }
 
@@ -434,6 +438,7 @@ impl<T: Send + Sync + Clone> OptionalState<T> {
         let mut lock = self.data.write().await;
         let old_value = lock.take();
         *lock = Some(data.clone());
+        drop(lock);
         if old_value.is_none() {
             self.notify_set(data).await;
         } else {
@@ -448,6 +453,7 @@ impl<T: Send + Sync + Clone> OptionalState<T> {
     pub async fn take(&self) -> Option<T> {
         let mut lock = self.data.write().await;
         let data = lock.take();
+        drop(lock);
         if data.is_some() {
             self.notify_unset(data.clone().unwrap()).await;
         }
@@ -458,6 +464,7 @@ impl<T: Send + Sync + Clone> OptionalState<T> {
         let mut lock = self.data.write().await;
         let last_value = lock.take();
         *lock = data.clone();
+        drop(lock);
         if last_value.is_some() && data.is_some() {
             self.notify_change(last_value.unwrap(), data.unwrap()).await;
         } else if last_value.is_some() && data.is_none() {
@@ -496,7 +503,7 @@ impl<T: Send + Sync + Clone> OptionalState<T> {
         let mut listeners = self.on_set.write().await;
         let mut ids = self.id_set.write().await;
         let index = ids.iter().position(|id| *id == name).unwrap();
-        listeners.remove(index);
+        let _ = listeners.remove(index);
         ids.remove(index);
     }
     
@@ -504,7 +511,7 @@ impl<T: Send + Sync + Clone> OptionalState<T> {
         let mut listeners = self.on_unset.write().await;
         let mut ids = self.id_unset.write().await;
         let index = ids.iter().position(|id| *id == name).unwrap();
-        listeners.remove(index);
+        let _ = listeners.remove(index);
         ids.remove(index);
     }
     
@@ -512,7 +519,7 @@ impl<T: Send + Sync + Clone> OptionalState<T> {
         let mut listeners = self.on_change.write().await;
         let mut ids = self.id_change.write().await;
         let index = ids.iter().position(|id| *id == name).unwrap();
-        listeners.remove(index);
+        let _ = listeners.remove(index);
         ids.remove(index);
     }
 
@@ -677,7 +684,9 @@ impl<T: Send + Sync + Clone> StateVec<T> {
     pub async fn push(&self, data: T) {
         let mut lock = self.data.write().await;
         lock.push(data.clone());
-        self.notify_add(lock.len() - 1, data).await;
+        let index = lock.len() - 1;
+        drop(lock);
+        self.notify_add(index, data).await;
     }
 
     pub async fn push_from<U: Into<T>>(self: &Self, data: U) {
@@ -687,8 +696,10 @@ impl<T: Send + Sync + Clone> StateVec<T> {
     pub async fn pop(&self) -> Option<T> {
         let mut lock = self.data.write().await;
         let result = lock.pop();
+        let index = lock.len();
+        drop(lock);
         if let Some(value) = result.clone() {
-            self.notify_remove(lock.len(), value).await;
+            self.notify_remove(index, value).await;
         }
         result
     }
@@ -701,6 +712,7 @@ impl<T: Send + Sync + Clone> StateVec<T> {
     pub async fn set(&self, index: usize, data: T) {
         let mut lock = self.data.write().await;
         let old_value = mem::replace(&mut lock[index], data.clone());
+        drop(lock);
         self.notify_set(index, old_value, data).await;
     }
 
@@ -748,7 +760,7 @@ impl<T: Send + Sync + Clone> StateVec<T> {
         let mut on_add = self.on_add.write().await;
         let mut id_on_add = self.id_add.write().await;
         if let Some(index) = id_on_add.iter().position(|x| *x == name) {
-            on_add.remove(index);
+            let _ = on_add.remove(index);
             id_on_add.remove(index);
         }
     }
@@ -757,7 +769,7 @@ impl<T: Send + Sync + Clone> StateVec<T> {
         let mut on_set = self.on_set.write().await;
         let mut id_on_set = self.id_set.write().await;
         if let Some(index) = id_on_set.iter().position(|x| *x == name) {
-            on_set.remove(index);
+            let _ = on_set.remove(index);
             id_on_set.remove(index);
         }
     }
@@ -766,7 +778,7 @@ impl<T: Send + Sync + Clone> StateVec<T> {
         let mut on_remove = self.on_remove.write().await;
         let mut id_on_remove = self.id_remove.write().await;
         if let Some(index) = id_on_remove.iter().position(|x| *x == name) {
-            on_remove.remove(index);
+            let _ = on_remove.remove(index);
             id_on_remove.remove(index);
         }
     }
@@ -922,7 +934,7 @@ StateMap<K, V> {
         let mut listeners = self.listeners.write().await;
         let mut identities = self.identities.write().await;
         if let Some(index) = identities.iter().position(|x| *x == name) {
-            listeners.remove(index);
+            let _ = listeners.remove(index);
             identities.remove(index);
         }
     }

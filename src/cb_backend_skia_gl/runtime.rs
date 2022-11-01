@@ -31,17 +31,15 @@ use skia_safe::{
 use crate::{
     caribou::{
         async_runtime,
-        batch::BatchFlattening,
-        input::{Key, MouseEventInfo}
+        input::{Key}
     },
     cb_backend_skia_gl::{
         batch::skia_render_batch,
         input::gl_virtual_to_key
     }
 };
-use crate::caribou::input::KeyEventInfo;
 use crate::caribou::math::ScalarPair;
-use crate::cb_backend_skia_gl::input::{gl_modifier_interpret, gl_mouse_button_interpret};
+use crate::cb_backend_skia_gl::input::{gl_mouse_button_interpret};
 
 type WindowedContext = ContextWrapper<PossiblyCurrent, Window>;
 
@@ -192,40 +190,26 @@ pub fn skia_gl_launch(window: CbWindow, env_id: usize) {
                             ret_vec.retain(|x| *x != key);
                             async_runtime().spawn(async move {
                                 let window = window_clone;
-                                window.key.broadcast(KeyEventInfo {
-                                    key,
-                                    is_down: false,
-                                    modifiers: gl_modifier_interpret(modifiers),
-                                }).await;
+                                window.key_down.remove(&key).await;
                             });
                         } else {
                             ret_vec.push(key);
                             async_runtime().spawn(async move {
                                 let window = window_clone;
-                                window.key.broadcast(KeyEventInfo {
-                                    key,
-                                    is_down: true,
-                                    modifiers: gl_modifier_interpret(modifiers),
-                                }).await;
+                                window.key_down.push(key).await;
                             });
                         }
                     }
                     frame += 1;
                 }
                 WindowEvent::CursorEntered { .. } => {
-                    let window_clone = window.clone();
-                    async_runtime().spawn(async move {
-                        let window = window_clone;
-                        window.root.get().await
-                            .mouse.broadcast(MouseEventInfo::Enter).await;
-                    });
+                    //let window_clone = window.clone();
                 }
                 WindowEvent::CursorLeft { .. } => {
                     let window_clone = window.clone();
                     async_runtime().spawn(async move {
                         let window = window_clone;
-                        window.root.get().await
-                            .mouse.broadcast(MouseEventInfo::Leave).await;
+                        window.mouse_pos.take().await;
                     });
                 }
                 WindowEvent::CursorMoved {
@@ -233,16 +217,13 @@ pub fn skia_gl_launch(window: CbWindow, env_id: usize) {
                     modifiers,
                     ..
                 } => {
-                    mouse_pos = (position.x as f32, position.y as f32).into();
+                    let new_pos: ScalarPair = (position.x as f32, position.y as f32).into();
+                    let new_pos = new_pos.times(1_f32 / skia_get_scale_factor());
+                    mouse_pos = new_pos;
                     let window_clone = window.clone();
                     async_runtime().spawn(async move {
                         let window = window_clone;
-                        window.root.get().await
-                            .mouse.broadcast(
-                            MouseEventInfo::Move {
-                                pos: mouse_pos.times(1.0 / skia_get_scale_factor()),
-                                modifiers: gl_modifier_interpret(modifiers),
-                            }).await;
+                        window.mouse_pos.put(mouse_pos).await;
                     });
                 }
                 WindowEvent::MouseInput {
@@ -251,24 +232,23 @@ pub fn skia_gl_launch(window: CbWindow, env_id: usize) {
                     modifiers,
                     ..
                 } => {
-                    let info = match state {
-                        ElementState::Pressed => MouseEventInfo::Down {
-                            button: gl_mouse_button_interpret(button),
-                            pos: mouse_pos,
-                            modifiers: gl_modifier_interpret(modifiers),
-                        },
-                        ElementState::Released => MouseEventInfo::Up {
-                            button: gl_mouse_button_interpret(button),
-                            pos: mouse_pos,
-                            modifiers: gl_modifier_interpret(modifiers),
-                        },
-                    };
-                    let window_clone = window.clone();
-                    async_runtime().spawn(async move {
-                        let window = window_clone;
-                        window.root.get().await
-                            .mouse.broadcast(info).await;
-                    });
+                    let button = gl_mouse_button_interpret(button);
+                    match state {
+                        ElementState::Pressed => {
+                            let window_clone = window.clone();
+                            async_runtime().spawn(async move {
+                                let window = window_clone;
+                                window.mouse_down.push(button).await;
+                            });
+                        }
+                        ElementState::Released => {
+                            let window_clone = window.clone();
+                            async_runtime().spawn(async move {
+                                let window = window_clone;
+                                window.mouse_down.remove(&button).await;
+                            });
+                        }
+                    }
                 }
                 WindowEvent::Ime(ev) => match ev {
                     Ime::Enabled => {
@@ -298,7 +278,7 @@ pub fn skia_gl_launch(window: CbWindow, env_id: usize) {
                     canvas.scale((scale_factor, scale_factor));
                     canvas.save();
                     let batch = async_runtime().block_on(async {
-                        window.root.get().await.draw.gather().await.flatten()
+                        window.root.get().await.batch.get_cloned().await
                     });
                     skia_render_batch(canvas, batch);
                     canvas.restore();

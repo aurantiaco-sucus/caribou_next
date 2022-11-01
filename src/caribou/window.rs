@@ -1,9 +1,10 @@
 use std::fmt::{Debug, Formatter, Pointer};
 use std::ops::Deref;
 use std::sync::{Arc, Weak};
+use log::info;
 use crate::caribou::focus::CaribouFocus;
 use crate::caribou::gadget::{Gadget, GadgetParent, GadgetRef};
-use crate::caribou::input::{Key, KeyEventInfo, MouseButton};
+use crate::caribou::input::{Key, MouseButton};
 use crate::caribou::math::{IntPair, ScalarPair};
 use crate::caribou::state::{OptionalState, State, StateVec};
 
@@ -67,14 +68,6 @@ impl Backend {
     }
 }
 
-impl Deref for Backend {
-    type Target = dyn WindowImpl;
-
-    fn deref(&self) -> &Self::Target {
-        self.window_impl.deref()
-    }
-}
-
 impl Debug for Backend {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         self.window_impl.fmt(f)
@@ -104,6 +97,21 @@ impl Window {
             })
         };
         window.cb_focus.attach_tab_listener(&window).await;
+
+        window_root_setup(window.clone(), root.clone()).await;
+
+        let wr = window.refer();
+        window.root.listen("root_switch", move |event| {
+            let wr = wr.clone();
+            Box::pin(async move {
+                let window = wr.get().unwrap();
+                let old_root = (*event.old_value).clone();
+                let new_root = event.state.get_cloned().await;
+                window_root_setup_reverse(window.clone(), old_root).await;
+                window_root_setup(window.clone(), new_root).await;
+            })
+        }).await;
+
         root.parent.set(GadgetParent::Window(window.refer())).await;
         window
     }
@@ -125,4 +133,78 @@ impl Window {
     pub fn request_redraw(&self) {
         self.backend.window_impl.request_redraw()
     }
+}
+
+async fn window_root_setup(window: Window, root: Gadget) {
+    root.parent.set(GadgetParent::Window(window.refer())).await;
+
+    let wr = window.refer();
+    root.batch.listen(
+        "window_update",
+        move |_| {
+            let window = wr.get().unwrap();
+            Box::pin(async move {
+                //info!("Requesting redraw!");
+                window.request_redraw();
+            })
+        }).await;
+
+    let gr = root.refer();
+    window.mouse_down.listen_add(
+        "mouse_down_add_sync",
+        move |event| {
+            let gadget = gr.get().unwrap();
+            Box::pin(async move {
+                gadget.mouse_down.push(event.new_value).await;
+            })
+        }).await;
+
+    let gr = root.refer();
+    window.mouse_down.listen_remove(
+        "mouse_down_remove_sync",
+        move |event| {
+            let gadget = gr.get().unwrap();
+            Box::pin(async move {
+                gadget.mouse_down.remove(&event.old_value).await;
+            })
+        }).await;
+
+    let gr = root.refer();
+    window.mouse_pos.listen_set(
+        "mouse_pos_set_sync",
+        move |event| {
+            let gadget = gr.get().unwrap();
+            Box::pin(async move {
+                gadget.mouse_pos.put(event.value).await;
+            })
+        }).await;
+
+    let gr = root.refer();
+    window.mouse_pos.listen_unset(
+        "mouse_pos_unset_sync",
+        move |_| {
+            let gadget = gr.get().unwrap();
+            Box::pin(async move {
+                gadget.mouse_pos.take().await;
+            })
+        }).await;
+
+    let gr = root.refer();
+    window.mouse_pos.listen_change(
+        "mouse_pos_change_sync",
+        move |event| {
+            let gadget = gr.get().unwrap();
+            Box::pin(async move {
+                gadget.mouse_pos.put(event.new_value).await;
+            })
+        }).await;
+}
+
+async fn window_root_setup_reverse(window: Window, root: Gadget) {
+    root.batch.remove_listener("window_update").await;
+    window.mouse_down.remove_listener_add("mouse_down_add_sync").await;
+    window.mouse_down.remove_listener_remove("mouse_down_remove_sync").await;
+    window.mouse_pos.remove_listener_set("mouse_pos_set_sync").await;
+    window.mouse_pos.remove_listener_unset("mouse_pos_unset_sync").await;
+    window.mouse_pos.remove_listener_change("mouse_pos_change_sync").await;
 }

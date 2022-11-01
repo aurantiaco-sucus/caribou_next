@@ -1,7 +1,7 @@
-use crate::caribou::AsyncTask;
+use log::info;
 use crate::caribou::batch::{begin_draw, begin_paint, Brush, Colors, Material, Painting, SolidColor, TextAlign, Transform};
 use crate::caribou::gadget::Gadget;
-use crate::caribou::input::{Key, MouseEventInfo};
+use crate::caribou::input::{Key, MouseButton};
 use crate::caribou::math::ScalarPair;
 use crate::caribou::state::{Arbitrary, State};
 
@@ -11,109 +11,7 @@ impl Button {
     pub async fn create(style: ButtonStyle) -> Gadget {
         let gadget = Gadget::default();
 
-        // Handle events
-
-        let gr = gadget.refer();
-        gadget.draw.handle(move || {
-            let gr = gr.clone();
-            AsyncTask::wrap(async move {
-                let gadget = gr.get().unwrap();
-                // Gadget properties
-                let enabled = gadget.enabled.get_cloned().await;
-                let focused = gadget.is_focused().await;
-                let dim = gadget.dim.get_cloned().await;
-                let font = gadget.font.get().await;
-                let data = gadget
-                    .data.get().await;
-                let data = data
-                    .get::<ButtonData>().await;
-                // Data properties
-                let style = data.style.get().await;
-                let state = data.state.get_cloned().await;
-                let caption = data.caption.get_cloned().await;
-                begin_paint()
-                    .with(|p| style.style_impl
-                        .draw_backdrop(p,
-                                       dim,
-                                       enabled,
-                                       state))
-                    .with(|p| style.style_impl
-                        .draw_caption(p,
-                                      dim,
-                                      enabled,
-                                      state,
-                                      caption.clone(),
-                                      font.clone()))
-                    .with(|p| style.style_impl
-                        .draw_overlay(p,
-                                     dim,
-                                     focused))
-                    .finish()
-            })
-        }).await;
-
-        let gr = gadget.refer();
-        gadget.mouse.handle(move |info| {
-            let gr = gr.clone();
-            AsyncTask::wrap(async move {
-                let gadget = gr.get().unwrap();
-                let enabled = gadget.enabled.get_cloned().await;
-                let data = gadget.data.get().await;
-                let data = data.get::<ButtonData>().await;
-                if enabled {
-                    match &info {
-                        MouseEventInfo::Enter => {
-                            data.state.set(ButtonState::Hover).await;
-                        }
-                        MouseEventInfo::Leave => {
-                            data.state.set(ButtonState::Normal).await;
-                        }
-                        MouseEventInfo::Down { .. } => {
-                            data.state.set(ButtonState::Pressed).await;
-                        }
-                        MouseEventInfo::Up { .. } => {
-                            data.state.set(ButtonState::Hover).await;
-                            gadget.action.broadcast().await;
-                        }
-                        MouseEventInfo::Move { .. } => {}
-                    }
-                }
-                gadget.get_window().await.unwrap().get().unwrap().request_redraw();
-            })
-        }).await;
-
-        let gr = gadget.refer();
-        gadget.focus.handle(move |focused| {
-            let gr = gr.clone();
-            AsyncTask::wrap(async move {
-                let gadget = gr.get().unwrap();
-                gadget.get_window().await.unwrap().get().unwrap().request_redraw();
-                true
-            })
-        }).await;
-
-        let gr = gadget.refer();
-        gadget.key.handle(move |info| {
-            let gr = gr.clone();
-            AsyncTask::wrap(async move {
-                let gadget = gr.get().unwrap();
-                let data = gadget.data.get().await;
-                let data = data.get::<ButtonData>().await;
-                let enabled = gadget.enabled.get_cloned().await;
-                if enabled {
-                    if info.is_down && info.key == Key::Return {
-                        data.state.set(ButtonState::Pressed).await;
-                    } else if !info.is_down && info.key == Key::Return {
-                        data.state.set(ButtonState::Normal).await;
-                        gadget.action.broadcast().await;
-                    }
-                    gadget.get_window().await.unwrap().get().unwrap().request_redraw();
-                }
-            })
-        }).await;
-
         // Fill specialized data
-
         let data = ButtonData {
             style: State::new(gadget.refer(), style),
             caption: State::new(gadget.refer(), String::from("Button")),
@@ -122,8 +20,129 @@ impl Button {
         gadget.data.set_any(data).await;
 
         // Fill common properties
-
         gadget.dim.set(ScalarPair::new(100.0, 30.0)).await;
+        gadget.accept_focus.set(true).await;
+        gadget.lock_focus.set(false).await;
+        gadget.accept_text.set(true).await;
+
+        // Initial update
+        button_batch_update(gadget.clone()).await;
+
+        // Listen batch update
+        gadget.dim.listen(
+            "button_batch_update",
+            |event| Box::pin(async move {
+                button_batch_update(event.gadget.get().unwrap()).await;
+            })).await;
+
+        gadget.enabled.listen(
+            "button_batch_update",
+            |event| Box::pin(async move {
+                button_batch_update(event.gadget.get().unwrap()).await;
+            })).await;
+
+        gadget.focused.listen(
+            "button_batch_update",
+            |event| Box::pin(async move {
+                button_batch_update(event.gadget.get().unwrap()).await;
+            })).await;
+
+        let data = gadget.data.get_cloned().await;
+        let data = data.get::<ButtonData>().await;
+
+        data.state.listen(
+            "button_batch_update",
+            |event| Box::pin(async move {
+                button_batch_update(event.gadget.get().unwrap()).await;
+            })).await;
+
+        data.caption.listen(
+            "button_batch_update",
+            |event| Box::pin(async move {
+                button_batch_update(event.gadget.get().unwrap()).await;
+            })).await;
+
+        drop(data);
+
+        // Listen state update
+        gadget.mouse_pos.listen_set(
+            "button_state_update",
+            |event| Box::pin(async move {
+                event.gadget.get().unwrap().data.get_cloned().await
+                    .get::<ButtonData>().await
+                    .state.set(ButtonState::Hover).await;
+            })).await;
+
+        gadget.mouse_pos.listen_unset(
+            "button_state_update",
+            |event| Box::pin(async move {
+                event.gadget.get().unwrap().data.get_cloned().await
+                    .get::<ButtonData>().await
+                    .state.set(ButtonState::Normal).await;
+            })).await;
+
+        gadget.mouse_down.listen_add(
+            "button_state_update",
+            |event| Box::pin(async move {
+                if event.new_value != MouseButton::Primary {
+                    return;
+                }
+                event.gadget.get().unwrap().data.get_cloned().await
+                    .get::<ButtonData>().await
+                    .state.set(ButtonState::Pressed).await;
+            })).await;
+
+        gadget.mouse_down.listen_remove(
+            "button_state_update",
+            |event| Box::pin(async move {
+                if event.old_value != MouseButton::Primary {
+                    return;
+                }
+                event.gadget.get().unwrap().data.get_cloned().await
+                    .get::<ButtonData>().await
+                    .state.set(ButtonState::Hover).await;
+            })).await;
+
+        gadget.key_down.listen_add(
+            "button_state_update",
+            |event| Box::pin(async move {
+                if event.new_value != Key::Return {
+                    return;
+                }
+                event.gadget.get().unwrap().data.get_cloned().await
+                    .get::<ButtonData>().await
+                    .state.set(ButtonState::Pressed).await;
+            })).await;
+
+        gadget.key_down.listen_remove(
+            "button_state_update",
+            |event| Box::pin(async move {
+                let gadget = event.gadget.get().unwrap();
+                let data = gadget.data.get_cloned().await;
+                let data = data.get::<ButtonData>().await;
+                if event.old_value != Key::Return {
+                    return;
+                }
+                if gadget.mouse_pos.get().await.is_some() {
+                    if gadget.mouse_down.get_vec().await.contains(&MouseButton::Primary) {
+                        return;
+                    } else {
+                        data.state.set(ButtonState::Hover).await;
+                    }
+                } else {
+                    data.state.set(ButtonState::Normal).await;
+                }
+            })).await;
+
+        // Listen focus management
+        gadget.enabled.listen(
+            "button_focus_update",
+            |event| Box::pin(async move {
+                let gadget = event.gadget.get().unwrap();
+                let enabled = gadget.enabled.get_cloned().await;
+                gadget.accept_focus.set(enabled).await;
+            })).await;
+
         gadget
     }
 }
@@ -132,6 +151,42 @@ pub struct ButtonData {
     pub style: State<ButtonStyle>,
     pub caption: State<String>,
     state: State<ButtonState>,
+}
+
+async fn button_batch_update(button: Gadget) {
+    let gadget = button;
+    // Gadget properties
+    let enabled = gadget.enabled.get_cloned().await;
+    let focused = gadget.is_focused().await;
+    let dim = gadget.dim.get_cloned().await;
+    let font = gadget.font.get().await;
+    let data = gadget
+        .data.get().await;
+    let data = data
+        .get::<ButtonData>().await;
+    // Data properties
+    let style = data.style.get().await;
+    let state = data.state.get_cloned().await;
+    let caption = data.caption.get_cloned().await;
+    let batch = begin_paint()
+        .with(|p| style.style_impl
+            .draw_backdrop(p,
+                           dim,
+                           enabled,
+                           state))
+        .with(|p| style.style_impl
+            .draw_caption(p,
+                          dim,
+                          enabled,
+                          state,
+                          caption.clone(),
+                          font.clone()))
+        .with(|p| style.style_impl
+            .draw_overlay(p,
+                          dim,
+                          focused))
+        .finish();
+    gadget.batch.set(batch).await;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -262,7 +317,6 @@ impl ButtonStyleImpl for SimpleButtonStyleImpl {
                       begin_draw()
                           .rect((1.0, 1.0), dim - (2.0, 2.0).into())
                           .finish(),
-                      Brush::from_stroke(self.li_focused)
-                          .width(2.0)))
+                      Brush::from_stroke(self.li_focused, 2.0)))
     }
 }

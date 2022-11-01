@@ -1,15 +1,15 @@
 use std::future::{Future};
+use std::pin::Pin;
 use std::thread;
 use std::time::Duration;
 use log::info;
 use tokio::runtime::Runtime;
-use tokio::task::JoinHandle;
+
 use tokio::time::sleep;
 
 pub mod batch;
 pub mod math;
 pub mod gadget;
-pub mod event;
 pub mod window;
 pub mod layout;
 pub mod input;
@@ -36,27 +36,6 @@ pub fn async_runtime() -> &'static Runtime {
     unsafe { TOKIO_RUNTIME.as_ref().unwrap_unchecked() }
 }
 
-pub struct AsyncTask<T: Send + 'static = ()> {
-    data: Box<dyn Future<Output = T> + Send>
-}
-
-impl<T: Send + 'static> AsyncTask<T> {
-    pub fn wrap(fut: impl Future<Output = T> + Send + 'static) -> Self {
-        Self { data: Box::new(fut) }
-    }
-
-    pub fn spawn(self) -> JoinHandle<T> {
-        async_runtime().spawn(async move {
-            let data = self.data;
-            Box::into_pin(data).await
-        })
-    }
-}
-
-pub trait IntoAsyncTask<T: Send + 'static> {
-    fn into_async_task(self) -> AsyncTask<T>;
-}
-
 #[macro_export]
 macro_rules! async_task {
     ($expr: expr) => {
@@ -71,7 +50,7 @@ pub enum ScheduleResult {
 }
 
 pub fn schedule<F: 'static>(delay: Duration, proc: F)
-    where F: Fn() -> AsyncTask<ScheduleResult> + Send + Sync
+    where F: Fn() -> Pin<Box<dyn Future<Output=ScheduleResult> + Send + Sync>> + Send + Sync
 {
     let proc = Box::new(proc);
     async_runtime().spawn(async move {
@@ -79,7 +58,7 @@ pub fn schedule<F: 'static>(delay: Duration, proc: F)
         let proc = proc;
         loop {
             sleep(delay).await;
-            let result = proc().spawn().await.unwrap();
+            let result = async_runtime().spawn(proc()).await.unwrap();
             match result {
                 ScheduleResult::Repeat => {}
                 ScheduleResult::RepeatAfter(new_delay) => delay = new_delay,

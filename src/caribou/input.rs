@@ -1,12 +1,5 @@
 use crate::caribou::math::ScalarPair;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct KeyEventInfo {
-    pub key: Key,
-    pub is_down: bool,
-    pub modifiers: Vec<Modifier>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Modifier {
     Shift, Control, Alt, Meta,
@@ -137,30 +130,17 @@ pub enum Key {
     Cut,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum MouseEventInfo {
-    Enter,
-    Leave,
-    Down {
-        button: MouseButton,
-        pos: ScalarPair,
-        modifiers: Vec<Modifier>,
-    },
-    Up {
-        button: MouseButton,
-        pos: ScalarPair,
-        modifiers: Vec<Modifier>,
-    },
-    Move {
-        pos: ScalarPair,
-        modifiers: Vec<Modifier>,
-    },
-}
-
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum MouseButton {
     Primary,
     Secondary,
     Tertiary,
     Other(u16),
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub struct DragInfo {
+    pub button: MouseButton,
+    pub begin: ScalarPair,
+    pub current: ScalarPair,
 }
