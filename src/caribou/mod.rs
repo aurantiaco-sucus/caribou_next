@@ -10,11 +10,65 @@ use tokio::time::sleep;
 pub mod batch;
 pub mod math;
 pub mod gadget;
+pub mod gadget2;
 pub mod window;
 pub mod layout;
 pub mod input;
 pub mod focus;
 pub mod state;
+pub mod drag;
+pub mod text;
+pub mod value;
+pub mod event;
+
+#[macro_export]
+macro_rules! deref_to_super {
+    ($derived_ty:ty => $super_ty:ty) => {
+        impl std::ops::Deref for $derived_ty {
+            type Target = $super_ty;
+
+            fn deref(&self) -> &Self::Target {
+                &self.super_struct
+            }
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! as_clone {
+    ($($var:ident),*) => {
+        $(let $var = $var.clone(););*
+    };
+    ($($var:ident => $target:ident),*) => {
+        $(let $target = $var.clone(););*
+    };
+}
+
+#[macro_export]
+macro_rules! bit_flags {
+    (pub enum $type_name:ident : $num_ty:ty { $($variant:ident = $value:literal),*, }) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        #[repr(transparent)]
+        pub struct $type_name($num_ty);
+        impl $type_name {
+            $(
+            const $variant: Self = Self($value);
+            paste::paste! {
+                pub fn [<has_ $variant>](self) -> bool {
+                    self.0 & Self::$variant.0 != 0
+                }
+            }
+            )*
+        }
+        impl std::ops::BitOr for $type_name {
+            type Output = Self;
+
+            fn bitor(self, rhs: Self) -> Self::Output {
+                Self(self.0 | rhs.0)
+            }
+        }
+    };
+}
 
 static mut TOKIO_RUNTIME: Option<Runtime> = None;
 

@@ -13,3 +13,4 @@ skia-safe = { version = "0.55", features = ["gpu", "gl"] }
 pretty_env_logger = "0.4"
 log = "0.4"
 async-recursion = "1"
+paste = "1.0"

@@ -5,6 +5,7 @@ use std::ops::{Deref, DerefMut};
 
 use crate::caribou::math::{Scalar, ScalarPair};
 use crate::caribou::state::Arbitrary;
+use crate::caribou::text::Font;
 
 #[repr(transparent)]
 #[derive(Debug, Default, Clone)]
@@ -117,6 +118,15 @@ impl Painting {
         Self { ops }
     }
 
+    pub fn text2(self,
+                transform: Transform,
+                text: String, font: Font,
+                align: TextAlign,
+                brush: Brush
+    ) -> Self {
+        todo!()
+    }
+
     pub fn batch(self, transform: Transform, batch: Batch) -> Self {
         let mut ops = self.ops;
         ops.push(BatchOp::Batch { transform, batch });
@@ -215,6 +225,7 @@ pub struct Transform {
     pub scale: ScalarPair,
     pub rotate: Scalar,
     pub rotate_center: ScalarPair,
+    pub clip: Option<ScalarPair>,
 }
 
 impl Default for Transform {
@@ -224,6 +235,7 @@ impl Default for Transform {
             scale: ScalarPair::one(),
             rotate: Scalar::default(),
             rotate_center: ScalarPair::zero(),
+            clip: None,
         }
     }
 }
@@ -267,6 +279,20 @@ impl Transform {
     pub fn rotate<S: Into<Scalar>>(&self, rotate: S) -> Self {
         Self {
             rotate: self.rotate + rotate.into(),
+            ..*self
+        }
+    }
+
+    pub fn from_clip<S: Into<ScalarPair>>(clip: S) -> Self {
+        Self {
+            clip: Some(clip.into()),
+            ..Default::default()
+        }
+    }
+
+    pub fn clip<S: Into<ScalarPair>>(&self, clip: S) -> Self {
+        Self {
+            clip: Some(clip.into()),
             ..*self
         }
     }

@@ -10,7 +10,7 @@ use crate::caribou::{async_runtime, caribou_init, schedule, ScheduleResult};
 use crate::caribou::layout::Layout;
 use crate::cb_backend_skia_gl::skia_gl_create_window;
 use crate::cb_control_builtin::button::{Button, ButtonData, ButtonStyle};
-use crate::cb_control_builtin::textbox::TextBox;
+use crate::cb_control_builtin::textbox::{Textbox, TextboxStyle};
 
 fn main() {
     caribou_init();
@@ -28,7 +28,7 @@ fn main() {
             .caption.set("Count: 0".into()).await;
         button2.pos.set((75.0, 25.0).into()).await;
 
-        let textbox = TextBox::create().await;
+        let textbox = Textbox::create(TextboxStyle::default()).await;
 
         Layout::add_child(&layout, button1.clone()).await;
         Layout::add_child(&layout, button2.clone()).await;

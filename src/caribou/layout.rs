@@ -1,5 +1,5 @@
 use log::info;
-use crate::caribou::batch::{begin_paint};
+use crate::caribou::batch::{begin_paint, Transform};
 use crate::caribou::gadget::{Gadget, GadgetParent, GadgetRef};
 use crate::caribou::math::{Region};
 use crate::caribou::state::{Listener, State};
@@ -141,6 +141,10 @@ async fn layout_update_batch(layout: Gadget) {
         );
     }
     let batch = artist.finish();
+    let batch = begin_paint()
+        .batch(Transform::from_clip(layout.dim.get_cloned().await),
+               batch)
+        .finish();
     // info!("Layout batch: {:?}", batch);
     layout.batch.set(batch).await;
 }

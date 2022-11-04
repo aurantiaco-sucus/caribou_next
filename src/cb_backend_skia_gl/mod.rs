@@ -1,6 +1,7 @@
 pub mod runtime;
 pub mod input;
 pub mod batch;
+pub mod text;
 
 use std::fmt::{Debug, Formatter};
 

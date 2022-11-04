@@ -179,6 +179,18 @@ impl Region {
         let other: Region = other.into();
         self.contains(other.origin) || self.contains(other.origin + other.size)
     }
+
+    pub fn width(&self) -> Scalar {
+        self.size.x
+    }
+
+    pub fn height(&self) -> Scalar {
+        self.size.y
+    }
+
+    pub fn center(&self) -> ScalarPair {
+        self.origin + self.size.times(0.5)
+    }
 }
 
 impl From<(ScalarPair, ScalarPair)> for Region {

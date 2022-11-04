@@ -1,12 +1,12 @@
-use crate::caribou::batch::{begin_draw, Brush, Colors, Material, Painting, SolidColor, Transform};
+use crate::caribou::batch::{begin_draw, begin_paint, Brush, Colors, Material, Painting, SolidColor, Transform};
 use crate::caribou::gadget::Gadget;
 use crate::caribou::math::ScalarPair;
 use crate::caribou::state::{Arbitrary, State};
 
-pub struct TextBox;
+pub struct Textbox;
 
-impl TextBox {
-    pub async fn create(style: TextBoxStyle) -> Gadget {
+impl Textbox {
+    pub async fn create(style: TextboxStyle) -> Gadget {
         let gadget = Gadget::default();
 
         // Fill common properties
@@ -14,26 +14,25 @@ impl TextBox {
         gadget.accept_focus.set(true).await;
         gadget.lock_focus.set(false).await;
 
-        // Initial update
-        textbox_batch_update(gadget.clone()).await;
-
         // Listen property updates
         gadget.dim.listen(
             "textbox_batch_update",
             move |event| Box::pin(async move {
                 textbox_batch_update(event.gadget.get().unwrap()).await;
-            }));
+            })).await;
 
         gadget.focused.listen(
             "textbox_state_update",
             move |event| Box::pin(async move {
                 textbox_batch_update(event.gadget.get().unwrap()).await;
-            }));
+            })).await;
 
         // Fill specialized data
         let data = TextBoxData {
             content: State::new_from(gadget.refer(), ""),
             state: State::new(gadget.refer(), TextBoxState::Unfocused),
+            cursor: State::new(gadget.refer(), 0),
+            style: State::new_any(gadget.refer(), style),
         };
 
         // Listen data updates
@@ -41,16 +40,25 @@ impl TextBox {
             "textbox_batch_update",
             move |event| Box::pin(async move {
                 textbox_batch_update(event.gadget.get().unwrap()).await;
-            }));
+            })).await;
 
         data.state.listen(
             "textbox_batch_update",
             move |event| Box::pin(async move {
                 textbox_batch_update(event.gadget.get().unwrap()).await;
-            }));
+            })).await;
+
+        data.cursor.listen(
+            "textbox_batch_update",
+            move |event| Box::pin(async move {
+                textbox_batch_update(event.gadget.get().unwrap()).await;
+            })).await;
 
         // Finish specialized data
         gadget.data.set_any(data).await;
+
+        // Initial update
+        textbox_batch_update(gadget.clone()).await;
 
         gadget
     }
@@ -59,26 +67,76 @@ impl TextBox {
 pub struct TextBoxData {
     pub content: State<String>,
     state: State<TextBoxState>,
+    pub cursor: State<usize>,
+    pub style: State<Arbitrary>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextBoxState {
     Unfocused,
     Edit,
-    ImePreEdit,
+    PreEdit,
 }
 
 async fn textbox_batch_update(textbox: Gadget) {
-
+    let dim = textbox.dim.get_cloned().await;
+    let enabled = textbox.enabled.get_cloned().await;
+    let pre = textbox.pre_edit.get_cloned().await;
+    let pre_pos = textbox.pre_edit_pos.get_cloned().await;
+    let font = textbox.font.get_cloned().await;
+    let data = textbox.data.get().await;
+    let data = data.get::<TextBoxData>().await;
+    let content = data.content.get_cloned().await;
+    let state = data.state.get_cloned().await;
+    let cursor = data.cursor.get_cloned().await;
+    let style = data.style.get_cloned().await;
+    let style = style.get::<TextboxStyle>().unwrap();
+    drop(data);
+    let mut painting = begin_paint();
+    if !enabled {
+        painting = painting
+            .with(|p| style.style_impl
+                .draw_backdrop(p, dim, enabled, false));
+        // todo: disabled ui: no cursor, no positioning, not interactive
+    } else {
+        match state {
+            TextBoxState::Unfocused => {
+                // todo: display ui: no cursor, positioning
+            }
+            TextBoxState::Edit => {
+                // todo: edit ui: blinking cursor, positioning
+            }
+            TextBoxState::PreEdit => {
+                // todo: pre-edit ui: pre-edit static cursor, positioning, pre-edit text
+            }
+        }
+    }
+    let batch = begin_paint()
+        .batch(Transform::from_clip(dim), painting.finish())
+        .finish();
+    textbox.batch.set(batch).await;
 }
 
-pub struct TextBoxStyle {
+async fn textbox_text_plain(painting: Painting,
+                            content: String,
+                            brush: Brush,
+                            font: Arbitrary) -> Painting {
+    painting
+}
+
+pub struct TextboxStyle {
     style_impl: Box<dyn TextBoxStyleImpl + Send + Sync>,
 }
 
-impl TextBoxStyle {
+impl TextboxStyle {
     pub fn from_impl(style_impl: impl TextBoxStyleImpl + Send + Sync + 'static) -> Self {
         Self { style_impl: Box::new(style_impl) }
+    }
+}
+
+impl Default for TextboxStyle {
+    fn default() -> Self {
+        Self { style_impl: Box::new(SimpleTextBoxStyleImpl::default()) }
     }
 }
 

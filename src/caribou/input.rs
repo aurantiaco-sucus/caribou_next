@@ -1,8 +1,19 @@
+use std::fmt::Debug;
+use crate::bit_flags;
 use crate::caribou::math::ScalarPair;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Modifier {
     Shift, Control, Alt, Meta,
+}
+
+bit_flags! {
+    pub enum Modifier2: u32 {
+        shift = 0b00000001,
+        control = 0b00000010,
+        alt = 0b00000100,
+        meta = 0b00001000,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,9 +149,51 @@ pub enum MouseButton {
     Other(u16),
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub struct DragInfo {
     pub button: MouseButton,
     pub begin: ScalarPair,
     pub current: ScalarPair,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum MouseEvent {
+    Enter,
+    Leave,
+    Move {
+        position: ScalarPair,
+        modifiers: Modifier2,
+    },
+    Button {
+        position: ScalarPair,
+        button: MouseButton,
+        is_down: bool,
+        modifiers: Modifier2,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct KeyEvent {
+    pub key: Key,
+    pub is_down: bool,
+    pub modifiers: Modifier2,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ChainResult<E: Debug + Clone + PartialEq> {
+    Capture,
+    Propagate,
+    Intercept(E),
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum FocusEvent {
+    Gain,
+    Lost,
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum FocusResult {
+    Accept,
+    Reject
 }
